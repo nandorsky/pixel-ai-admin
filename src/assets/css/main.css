@@ -1,0 +1,38 @@
+@import "tailwindcss" theme(static);
+@import "@nuxt/ui";
+
+@theme static {
+  --font-sans: 'Public Sans', sans-serif;
+
+  /* Neutral/Zinc color palette for primary */
+  --color-neutral-50: oklch(98.5% 0 0);
+  --color-neutral-100: oklch(96.7% 0.001 286.38);
+  --color-neutral-200: oklch(92% 0.004 286.32);
+  --color-neutral-300: oklch(87.1% 0.006 286.29);
+  --color-neutral-400: oklch(70.7% 0.01 286.07);
+  --color-neutral-500: oklch(55.2% 0.014 285.82);
+  --color-neutral-600: oklch(44.2% 0.017 285.79);
+  --color-neutral-700: oklch(37.1% 0.021 285.81);
+  --color-neutral-800: oklch(27.4% 0.019 286.03);
+  --color-neutral-900: oklch(21% 0.012 285.75);
+  --color-neutral-950: oklch(14.5% 0.007 285.82);
+}
+
+:root {
+  --ui-primary: var(--color-neutral-500);
+  --ui-color-primary-50: var(--color-neutral-50);
+  --ui-color-primary-100: var(--color-neutral-100);
+  --ui-color-primary-200: var(--color-neutral-200);
+  --ui-color-primary-300: var(--color-neutral-300);
+  --ui-color-primary-400: var(--color-neutral-400);
+  --ui-color-primary-500: var(--color-neutral-500);
+  --ui-color-primary-600: var(--color-neutral-600);
+  --ui-color-primary-700: var(--color-neutral-700);
+  --ui-color-primary-800: var(--color-neutral-800);
+  --ui-color-primary-900: var(--color-neutral-900);
+  --ui-color-primary-950: var(--color-neutral-950);
+}
+
+.dark {
+  --ui-primary: var(--color-neutral-400);
+}

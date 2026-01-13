@@ -1,0 +1,221 @@
+<script setup lang="ts">
+import { useTemplateRef, ref, computed, onMounted } from 'vue'
+import { upperFirst } from 'scule'
+import type { TableColumn } from '@nuxt/ui'
+import { getPaginationRowModel } from '@tanstack/table-core'
+import { supabase } from '../utils/supabase'
+
+interface Signup {
+  id: string
+  created_at: string
+  email: string
+  referral_code: string
+}
+
+const toast = useToast()
+const table = useTemplateRef('table')
+
+const columnFilters = ref([{
+  id: 'email',
+  value: ''
+}])
+const columnVisibility = ref()
+const rowSelection = ref({})
+
+const data = ref<Signup[]>([])
+const isFetching = ref(true)
+
+async function fetchSignups() {
+  isFetching.value = true
+  const { data: signups, error } = await supabase
+    .from('signups')
+    .select('id, created_at, email, referral_code')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    toast.add({
+      title: 'Error fetching signups',
+      description: error.message,
+      color: 'error'
+    })
+  } else {
+    data.value = signups || []
+  }
+  isFetching.value = false
+}
+
+onMounted(() => {
+  fetchSignups()
+})
+
+function copyToClipboard(text: string, label: string) {
+  navigator.clipboard.writeText(text)
+  toast.add({
+    title: 'Copied to clipboard',
+    description: `${label} copied to clipboard`
+  })
+}
+
+function formatDate(dateString: string) {
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function truncateId(id: string | number) {
+  const str = String(id)
+  return str.length > 8 ? str.substring(0, 8) + '...' : str
+}
+
+const columns: TableColumn<Signup>[] = [
+  {
+    accessorKey: 'id',
+    header: 'ID'
+  },
+  {
+    accessorKey: 'email',
+    header: 'Email'
+  },
+  {
+    accessorKey: 'created_at',
+    header: 'Signed Up'
+  },
+  {
+    accessorKey: 'referral_code',
+    header: 'Referral Code'
+  }
+]
+
+const email = computed({
+  get: (): string => {
+    return (table.value?.tableApi?.getColumn('email')?.getFilterValue() as string) || ''
+  },
+  set: (value: string) => {
+    table.value?.tableApi?.getColumn('email')?.setFilterValue(value || undefined)
+  }
+})
+
+const pagination = ref({
+  pageIndex: 0,
+  pageSize: 10
+})
+</script>
+
+<template>
+  <UDashboardPanel id="signups">
+    <template #header>
+      <UDashboardNavbar title="Signups">
+        <template #leading>
+          <UDashboardSidebarCollapse />
+        </template>
+      </UDashboardNavbar>
+    </template>
+
+    <template #body>
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <UInput
+          v-model="email"
+          class="max-w-sm"
+          icon="i-lucide-search"
+          placeholder="Search..."
+        />
+
+        <div class="flex flex-wrap items-center gap-1.5">
+          <UDropdownMenu
+            :items="
+              table?.tableApi
+                ?.getAllColumns()
+                .filter((column: any) => column.getCanHide())
+                .map((column: any) => ({
+                  label: upperFirst(column.id),
+                  type: 'checkbox' as const,
+                  checked: column.getIsVisible(),
+                  onUpdateChecked(checked: boolean) {
+                    table?.tableApi?.getColumn(column.id)?.toggleVisibility(!!checked)
+                  },
+                  onSelect(e?: Event) {
+                    e?.preventDefault()
+                  }
+                }))
+            "
+            :content="{ align: 'end' }"
+          >
+            <UButton
+              label="Display"
+              color="neutral"
+              variant="outline"
+              trailing-icon="i-lucide-settings-2"
+            />
+          </UDropdownMenu>
+        </div>
+      </div>
+
+      <UTable
+        ref="table"
+        v-model:column-filters="columnFilters"
+        v-model:column-visibility="columnVisibility"
+        v-model:row-selection="rowSelection"
+        v-model:pagination="pagination"
+        :pagination-options="{
+          getPaginationRowModel: getPaginationRowModel()
+        }"
+        class="shrink-0"
+        :data="data"
+        :columns="columns"
+        :loading="isFetching"
+        :ui="{
+          base: 'table-fixed border-separate border-spacing-0',
+          thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+          tbody: '[&>tr]:last:[&>td]:border-b-0',
+          th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+          td: 'border-b border-default',
+          separator: 'h-0'
+        }"
+      >
+        <template #id-cell="{ row }">
+          <span class="font-mono text-xs">{{ truncateId(row.original.id) }}</span>
+        </template>
+
+        <template #email-cell="{ row }">
+          {{ row.original.email }}
+        </template>
+
+        <template #referral_code-cell="{ row }">
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-xs">{{ row.original.referral_code }}</span>
+            <UButton
+              icon="i-lucide-copy"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              @click="copyToClipboard(row.original.referral_code, 'Referral code')"
+            />
+          </div>
+        </template>
+
+        <template #created_at-cell="{ row }">
+          {{ formatDate(row.original.created_at) }}
+        </template>
+      </UTable>
+
+      <div class="flex items-center justify-between gap-3 border-t border-default pt-4 mt-auto">
+        <div class="text-sm text-muted">
+          {{ data.length }} signup(s) total
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <UPagination
+            :default-page="(table?.tableApi?.getState().pagination.pageIndex || 0) + 1"
+            :items-per-page="table?.tableApi?.getState().pagination.pageSize"
+            :total="table?.tableApi?.getFilteredRowModel().rows.length"
+            @update:page="(p: number) => table?.tableApi?.setPageIndex(p - 1)"
+          />
+        </div>
+      </div>
+    </template>
+  </UDashboardPanel>
+</template>
