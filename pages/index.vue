@@ -7,6 +7,8 @@ const supabase = useSupabase()
 interface Signup {
   id: number
   email: string
+  first_name: string | null
+  last_name: string | null
   referral_code: string
   referred_by: string | null
   created_at: string
@@ -15,6 +17,8 @@ interface Signup {
 interface ActivityItem {
   id: number
   email: string
+  name: string
+  referrer_name: string | null
   referrer_email: string | null
   created_at: string
   time_ago: string
@@ -35,7 +39,7 @@ async function fetchSignups() {
 
   const { data, error } = await supabase
     .from('signups')
-    .select('id, email, referral_code, referred_by, created_at')
+    .select('id, email, first_name, last_name, referral_code, referred_by, created_at')
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -51,23 +55,35 @@ async function fetchSignups() {
   loading.value = false
 }
 
+function formatName(firstName: string | null, lastName: string | null): string {
+  return `${firstName || ''} ${lastName || ''}`.trim()
+}
+
 // Recent activity - signups with referrer info
 const recentActivity = computed<ActivityItem[]>(() => {
-  // Build code to email map
-  const codeToEmail = new Map<string, string>()
-  signups.value.forEach(s => codeToEmail.set(s.referral_code, s.email))
+  // Build code to user info map
+  const codeToUser = new Map<string, { email: string; name: string }>()
+  signups.value.forEach(s => codeToUser.set(s.referral_code, {
+    email: s.email,
+    name: formatName(s.first_name, s.last_name)
+  }))
 
   // Get recent signups sorted by date descending, limit to 10
   return [...signups.value]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 10)
-    .map(s => ({
-      id: s.id,
-      email: s.email,
-      referrer_email: s.referred_by ? codeToEmail.get(s.referred_by) || null : null,
-      created_at: s.created_at,
-      time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true })
-    }))
+    .map(s => {
+      const referrer = s.referred_by ? codeToUser.get(s.referred_by) : null
+      return {
+        id: s.id,
+        email: s.email,
+        name: formatName(s.first_name, s.last_name),
+        referrer_name: referrer?.name || null,
+        referrer_email: referrer?.email || null,
+        created_at: s.created_at,
+        time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true })
+      }
+    })
 })
 
 onMounted(() => {
@@ -131,15 +147,15 @@ onMounted(() => {
                 <!-- Content -->
                 <div class="flex-1 min-w-0 pt-0.5">
                   <p class="text-sm text-highlighted truncate">
-                    <span class="font-medium">{{ activity.email }}</span>
+                    <span class="font-medium">{{ activity.name || activity.email }}</span>
                     <span class="text-muted"> signed up</span>
                   </p>
                   <p class="text-xs text-muted mt-0.5">
-                    <span v-if="activity.referrer_email">
-                      via {{ activity.referrer_email }}
+                    <span v-if="activity.referrer_name || activity.referrer_email">
+                      Referred by <span class="text-highlighted">{{ activity.referrer_name || activity.referrer_email }}</span>
                     </span>
                     <span v-else>
-                      Direct
+                      Direct signup
                     </span>
                     <span class="mx-1">·</span>
                     <span>{{ activity.time_ago }}</span>

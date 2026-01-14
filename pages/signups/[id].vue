@@ -19,6 +19,7 @@ interface Signup {
 }
 
 const signup = ref<Signup | null>(null)
+const referrerEmail = ref<string | null>(null)
 const isLoading = ref(true)
 
 async function fetchSignup() {
@@ -37,6 +38,16 @@ async function fetchSignup() {
     })
   } else {
     signup.value = data
+
+    // Fetch referrer email if referred_by exists
+    if (data?.referred_by) {
+      const { data: referrer } = await supabase
+        .from('signups')
+        .select('email')
+        .eq('referral_code', data.referred_by)
+        .single()
+      referrerEmail.value = referrer?.email || null
+    }
   }
   isLoading.value = false
 }
@@ -128,7 +139,7 @@ const fullName = computed(() => {
             </div>
             <div>
               <dt class="text-sm text-muted">Referred By</dt>
-              <dd class="mt-1 font-mono text-sm">{{ signup.referred_by || '—' }}</dd>
+              <dd class="mt-1">{{ referrerEmail || (signup.referred_by ? 'Unknown' : '—') }}</dd>
             </div>
             <div>
               <dt class="text-sm text-muted">Signed Up</dt>

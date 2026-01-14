@@ -1,6 +1,14 @@
 export default defineNuxtConfig({
   modules: ['@nuxt/ui'],
 
+  app: {
+    head: {
+      meta: [
+        { name: 'robots', content: 'noindex, nofollow' }
+      ]
+    }
+  },
+
   css: ['~/assets/css/main.css'],
 
   ui: {
