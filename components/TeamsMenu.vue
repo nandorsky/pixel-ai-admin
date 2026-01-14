@@ -9,6 +9,6 @@ defineProps<{
     <div class="flex items-center justify-center size-8 rounded-md bg-primary text-primary-foreground font-bold text-sm">
       P
     </div>
-    <span v-if="!collapsed" class="font-semibold text-highlighted">Pixel AI</span>
+    <span v-if="!collapsed" class="font-semibold text-highlighted">Pixel</span>
   </div>
 </template>
