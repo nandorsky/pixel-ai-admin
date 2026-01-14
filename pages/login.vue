@@ -8,7 +8,8 @@ const toast = useToast()
 
 const ALLOWED_EMAILS = [
   'gil@metadata.io',
-  'nate.andorsky@metadata.io'
+  'nate.andorsky@metadata.io',
+  'lisa.sharapata@metadata.io'
 ]
 
 const email = ref('')
