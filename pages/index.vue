@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, onMounted } from 'vue'
 import { sub, formatDistanceToNow } from 'date-fns'
-import { supabase } from '../utils/supabase'
-import type { Period, Range } from '../types'
+import type { Period, Range } from '~/types'
+
+const supabase = useSupabase()
 
 interface Signup {
   id: number
@@ -94,43 +94,59 @@ onMounted(() => {
 
     <template #body>
       <HomeStats :period="period" :range="range" />
-      <HomeChart :period="period" :range="range" />
 
-      <!-- Recent Activity -->
-      <div class="mt-6">
-        <h3 class="text-lg font-semibold text-highlighted mb-4">Recent Activity</h3>
-
-        <div v-if="loading" class="flex items-center justify-center h-32">
-          <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-muted" />
+      <div class="flex flex-col lg:flex-row gap-6">
+        <!-- Chart -->
+        <div class="flex-1 min-w-0">
+          <HomeChart :period="period" :range="range" />
         </div>
 
-        <div v-else-if="recentActivity.length === 0" class="text-center py-8 text-muted">
-          No recent activity
-        </div>
+        <!-- Recent Activity -->
+        <div class="w-full lg:w-80 shrink-0">
+          <h3 class="text-lg font-semibold text-highlighted mb-4">Recent Activity</h3>
 
-        <div v-else class="space-y-2">
-          <div
-            v-for="activity in recentActivity"
-            :key="activity.id"
-            class="flex items-center gap-3 p-3 rounded-lg bg-elevated/50 border border-default"
-          >
-            <div class="size-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium text-primary">
-              {{ activity.email.charAt(0).toUpperCase() }}
+          <div v-if="loading" class="flex items-center justify-center h-32">
+            <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-muted" />
+          </div>
+
+          <div v-else-if="recentActivity.length === 0" class="text-center py-8 text-muted">
+            No recent activity
+          </div>
+
+          <div v-else class="relative">
+            <!-- Timeline line -->
+            <div class="absolute left-4 top-0 bottom-0 w-px bg-default" />
+
+            <div class="space-y-0">
+              <div
+                v-for="(activity, index) in recentActivity"
+                :key="activity.id"
+                class="relative flex gap-4 pb-6 last:pb-0"
+              >
+                <!-- Timeline dot -->
+                <div class="relative z-10 flex items-center justify-center size-8 rounded-full bg-elevated border-2 border-default text-xs font-medium text-muted">
+                  {{ activity.email.charAt(0).toUpperCase() }}
+                </div>
+
+                <!-- Content -->
+                <div class="flex-1 min-w-0 pt-0.5">
+                  <p class="text-sm text-highlighted truncate">
+                    <span class="font-medium">{{ activity.email }}</span>
+                    <span class="text-muted"> signed up</span>
+                  </p>
+                  <p class="text-xs text-muted mt-0.5">
+                    <span v-if="activity.referrer_email">
+                      via {{ activity.referrer_email }}
+                    </span>
+                    <span v-else>
+                      Direct
+                    </span>
+                    <span class="mx-1">·</span>
+                    <span>{{ activity.time_ago }}</span>
+                  </p>
+                </div>
+              </div>
             </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-highlighted truncate">
-                {{ activity.email }}
-              </p>
-              <p class="text-xs text-muted">
-                <span v-if="activity.referrer_email">
-                  Referred by <span class="text-highlighted">{{ activity.referrer_email }}</span>
-                </span>
-                <span v-else>
-                  Direct signup
-                </span>
-              </p>
-            </div>
-            <span class="text-xs text-muted whitespace-nowrap">{{ activity.time_ago }}</span>
           </div>
         </div>
       </div>

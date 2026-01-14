@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { useTemplateRef, ref, computed, onMounted } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 import { getPaginationRowModel, getExpandedRowModel } from '@tanstack/table-core'
-import { supabase } from '../utils/supabase'
+
+const supabase = useSupabase()
 
 interface ReferredUser {
   email: string

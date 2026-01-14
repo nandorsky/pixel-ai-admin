@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { supabase } from '../../utils/supabase'
-import type { Period, Range } from '../../types'
+import type { Period, Range } from '~/types'
+
+const supabase = useSupabase()
 
 defineProps<{
   period: Period

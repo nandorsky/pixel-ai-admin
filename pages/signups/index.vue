@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { useTemplateRef, ref, computed, onMounted } from 'vue'
 import { upperFirst } from 'scule'
 import type { TableColumn } from '@nuxt/ui'
 import { getPaginationRowModel } from '@tanstack/table-core'
-import { supabase } from '../utils/supabase'
+
+const supabase = useSupabase()
 
 interface Signup {
   id: string
   created_at: string
   email: string
+  first_name: string | null
+  last_name: string | null
   referral_code: string
 }
 
@@ -29,7 +31,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, referral_code')
+    .select('id, created_at, email, first_name, last_name, referral_code')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -75,6 +77,11 @@ const columns: TableColumn<Signup>[] = [
   {
     accessorKey: 'id',
     header: 'ID'
+  },
+  {
+    id: 'name',
+    header: 'Name',
+    accessorFn: (row) => `${row.first_name || ''} ${row.last_name || ''}`.trim()
   },
   {
     accessorKey: 'email',
@@ -178,6 +185,15 @@ const pagination = ref({
       >
         <template #id-cell="{ row }">
           <span class="font-mono text-xs">{{ truncateId(row.original.id) }}</span>
+        </template>
+
+        <template #name-cell="{ row }">
+          <NuxtLink
+            :to="`/signups/${row.original.id}`"
+            class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}
+          </NuxtLink>
         </template>
 
         <template #email-cell="{ row }">

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, useTemplateRef, ref, watch } from 'vue'
 import { eachDayOfInterval, eachWeekOfInterval, eachMonthOfInterval, format, startOfDay, startOfWeek, startOfMonth } from 'date-fns'
 import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip } from '@unovis/vue'
 import { useElementSize } from '@vueuse/core'
-import { supabase } from '../../utils/supabase'
-import type { Period, Range } from '../../types'
+import type { Period, Range } from '~/types'
+
+const supabase = useSupabase()
 
 const cardRef = useTemplateRef<HTMLElement | null>('cardRef')
 
