@@ -16,6 +16,14 @@ const email = ref('')
 const isLoading = ref(false)
 const emailSent = ref(false)
 
+// Redirect to home if already authenticated
+onMounted(async () => {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session) {
+    navigateTo('/')
+  }
+})
+
 async function sendMagicLink() {
   if (!email.value) {
     toast.add({
