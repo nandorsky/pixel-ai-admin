@@ -4,6 +4,11 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
   }
 
+  // Skip auth on localhost
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return
+  }
+
   // Skip auth check for login page
   if (to.path === '/login') {
     return

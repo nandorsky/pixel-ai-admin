@@ -30,6 +30,13 @@ const links = [[{
   onSelect: () => {
     open.value = false
   }
+}, {
+  label: 'Network',
+  icon: 'i-lucide-git-branch',
+  to: '/network',
+  onSelect: () => {
+    open.value = false
+  }
 }]] satisfies NavigationMenuItem[][]
 </script>
 
