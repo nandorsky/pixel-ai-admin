@@ -16,10 +16,12 @@ interface Signup {
   monthly_ad_spend: string | null
   channels: string | null
   wants_to_share: string | null
+  source: string | null
+  hear_about_us: string | null
 }
 
 const signup = ref<Signup | null>(null)
-const referrerEmail = ref<string | null>(null)
+const referrer = ref<{ email: string; first_name: string | null; last_name: string | null } | null>(null)
 const isLoading = ref(true)
 
 async function fetchSignup() {
@@ -39,14 +41,14 @@ async function fetchSignup() {
   } else {
     signup.value = data
 
-    // Fetch referrer email if referred_by exists
+    // Fetch referrer details if referred_by exists
     if (data?.referred_by) {
-      const { data: referrer } = await supabase
+      const { data: referrerData } = await supabase
         .from('signups')
-        .select('email')
+        .select('email, first_name, last_name')
         .eq('referral_code', data.referred_by)
         .single()
-      referrerEmail.value = referrer?.email || null
+      referrer.value = referrerData || null
     }
   }
   isLoading.value = false
@@ -78,6 +80,15 @@ function parseChannels(channels: string | null): string[] {
 const fullName = computed(() => {
   if (!signup.value) return ''
   return `${signup.value.first_name || ''} ${signup.value.last_name || ''}`.trim() || 'Unknown'
+})
+
+const referrerDisplay = computed(() => {
+  if (!referrer.value) return null
+  const name = `${referrer.value.first_name || ''} ${referrer.value.last_name || ''}`.trim()
+  if (name) {
+    return `${name} (${referrer.value.email})`
+  }
+  return referrer.value.email
 })
 </script>
 
@@ -139,7 +150,15 @@ const fullName = computed(() => {
             </div>
             <div>
               <dt class="text-sm text-muted">Referred By</dt>
-              <dd class="mt-1">{{ referrerEmail || (signup.referred_by ? 'Unknown' : '—') }}</dd>
+              <dd class="mt-1">{{ referrerDisplay || (signup.referred_by ? 'Unknown' : '—') }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm text-muted">Source</dt>
+              <dd class="mt-1">{{ signup.source || '—' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm text-muted">How They Heard About Us</dt>
+              <dd class="mt-1">{{ signup.hear_about_us || '—' }}</dd>
             </div>
             <div>
               <dt class="text-sm text-muted">Signed Up</dt>
