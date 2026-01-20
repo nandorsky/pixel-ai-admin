@@ -26,18 +26,28 @@ const loading = ref(true)
 async function fetchSignups() {
   loading.value = true
 
-  const { data: signups, error } = await supabase
-    .from('signups')
-    .select('created_at')
-    .gte('created_at', props.range.start.toISOString())
-    .lte('created_at', props.range.end.toISOString())
-    .order('created_at', { ascending: true })
+  // Fetch signups within range and count of signups before range (for baseline)
+  const [rangeResult, baselineResult] = await Promise.all([
+    supabase
+      .from('signups')
+      .select('created_at')
+      .gte('created_at', props.range.start.toISOString())
+      .lte('created_at', props.range.end.toISOString())
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('signups')
+      .select('*', { count: 'exact', head: true })
+      .lt('created_at', props.range.start.toISOString())
+  ])
 
-  if (error) {
-    console.error('Error fetching signups:', error)
+  if (rangeResult.error) {
+    console.error('Error fetching signups:', rangeResult.error)
     loading.value = false
     return
   }
+
+  const signups = rangeResult.data
+  const baseline = baselineResult.count || 0
 
   // Get all dates in the range based on period
   const intervalFn = ({
@@ -70,11 +80,15 @@ async function fetchSignups() {
     }
   })
 
-  // Convert to array
-  data.value = dates.map(date => ({
-    date,
-    count: countsByDate.get(startFn(date).toISOString()) || 0
-  }))
+  // Convert to array with cumulative totals (starting from baseline)
+  let runningTotal = baseline
+  data.value = dates.map(date => {
+    runningTotal += countsByDate.get(startFn(date).toISOString()) || 0
+    return {
+      date,
+      count: runningTotal
+    }
+  })
 
   loading.value = false
 }
@@ -86,7 +100,7 @@ watch([() => props.period, () => props.range], () => {
 const x = (_: DataRecord, i: number) => i
 const y = (d: DataRecord) => d.count
 
-const total = computed(() => data.value.reduce((acc: number, { count }) => acc + count, 0))
+const total = computed(() => data.value.length > 0 ? data.value[data.value.length - 1].count : 0)
 
 const formatDate = (date: Date): string => {
   return ({
@@ -104,7 +118,7 @@ const xTicks = (i: number) => {
   return formatDate(data.value[i].date)
 }
 
-const template = (d: DataRecord) => `${formatDate(d.date)}: ${d.count} signup${d.count !== 1 ? 's' : ''}`
+const template = (d: DataRecord) => `${formatDate(d.date)}: ${d.count} total signup${d.count !== 1 ? 's' : ''}`
 </script>
 
 <template>
@@ -112,7 +126,7 @@ const template = (d: DataRecord) => `${formatDate(d.date)}: ${d.count} signup${d
     <template #header>
       <div>
         <p class="text-xs text-muted uppercase mb-1.5">
-          Signups
+          Total Signups
         </p>
         <p class="text-3xl text-highlighted font-semibold">
           {{ total.toLocaleString() }}
