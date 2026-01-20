@@ -3,6 +3,14 @@ const route = useRoute()
 const supabase = useSupabase()
 const toast = useToast()
 
+interface UtmParameters {
+  utm_source?: string
+  utm_medium?: string
+  utm_campaign?: string
+  utm_term?: string
+  utm_content?: string
+}
+
 interface Signup {
   id: number
   created_at: string
@@ -13,11 +21,9 @@ interface Signup {
   referred_by: string | null
   company_name: string | null
   role: string | null
-  monthly_ad_spend: string | null
-  channels: string | null
-  wants_to_share: string | null
   source: string | null
   hear_about_us: string | null
+  utm_parameters: UtmParameters | null
 }
 
 const signup = ref<Signup | null>(null)
@@ -66,15 +72,6 @@ function formatDate(dateString: string) {
     hour: '2-digit',
     minute: '2-digit'
   })
-}
-
-function parseChannels(channels: string | null): string[] {
-  if (!channels) return []
-  try {
-    return JSON.parse(channels)
-  } catch {
-    return []
-  }
 }
 
 const fullName = computed(() => {
@@ -167,33 +164,31 @@ const referrerDisplay = computed(() => {
           </dl>
         </UCard>
 
-        <UCard>
+        <UCard v-if="signup.utm_parameters">
           <template #header>
-            <h3 class="font-semibold">Advertising Details</h3>
+            <h3 class="font-semibold">UTM Parameters</h3>
           </template>
 
-          <dl class="grid grid-cols-1 gap-4">
-            <div>
-              <dt class="text-sm text-muted">Monthly Ad Spend</dt>
-              <dd class="mt-1 font-medium">{{ signup.monthly_ad_spend || '—' }}</dd>
+          <dl class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div v-if="signup.utm_parameters.utm_source">
+              <dt class="text-sm text-muted">Source</dt>
+              <dd class="mt-1 font-medium">{{ signup.utm_parameters.utm_source }}</dd>
             </div>
-            <div>
-              <dt class="text-sm text-muted">Channels</dt>
-              <dd class="mt-2 flex flex-wrap gap-2">
-                <UBadge
-                  v-for="channel in parseChannels(signup.channels)"
-                  :key="channel"
-                  color="neutral"
-                  variant="subtle"
-                >
-                  {{ channel }}
-                </UBadge>
-                <span v-if="!parseChannels(signup.channels).length" class="text-muted">—</span>
-              </dd>
+            <div v-if="signup.utm_parameters.utm_medium">
+              <dt class="text-sm text-muted">Medium</dt>
+              <dd class="mt-1 font-medium">{{ signup.utm_parameters.utm_medium }}</dd>
             </div>
-            <div>
-              <dt class="text-sm text-muted">Wants to Share</dt>
-              <dd class="mt-1 font-medium capitalize">{{ signup.wants_to_share || '—' }}</dd>
+            <div v-if="signup.utm_parameters.utm_campaign">
+              <dt class="text-sm text-muted">Campaign</dt>
+              <dd class="mt-1 font-medium">{{ signup.utm_parameters.utm_campaign }}</dd>
+            </div>
+            <div v-if="signup.utm_parameters.utm_term">
+              <dt class="text-sm text-muted">Term</dt>
+              <dd class="mt-1 font-medium">{{ signup.utm_parameters.utm_term }}</dd>
+            </div>
+            <div v-if="signup.utm_parameters.utm_content">
+              <dt class="text-sm text-muted">Content</dt>
+              <dd class="mt-1 font-medium">{{ signup.utm_parameters.utm_content }}</dd>
             </div>
           </dl>
         </UCard>

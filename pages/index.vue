@@ -12,6 +12,7 @@ interface Signup {
   referral_code: string
   referred_by: string | null
   created_at: string
+  utm_parameters: Record<string, string> | null
 }
 
 type ChartRecord = { date: Date; count: number }
@@ -37,7 +38,7 @@ const todaySignups = computed(() => {
 onMounted(async () => {
   const { data, error } = await supabase
     .from('signups')
-    .select('id, email, first_name, last_name, referral_code, referred_by, created_at')
+    .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters')
     .order('created_at', { ascending: true })
 
   if (!error && data) {
@@ -103,11 +104,15 @@ const recentSignups = computed(() => {
     .slice(0, 8)
     .map(s => {
       const referrer = s.referred_by ? codeToUser.value.get(s.referred_by) : null
+      const hasUtm = s.utm_parameters && Object.keys(s.utm_parameters).length > 0
+      const utmSource = s.utm_parameters?.utm_medium || null
       return {
         id: s.id,
         email: s.email,
         name: formatName(s.first_name, s.last_name),
         referrer: referrer?.name || referrer?.email || null,
+        hasUtm,
+        utmSource,
         date: format(new Date(s.created_at), 'MMM d'),
         time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true })
       }
@@ -210,7 +215,8 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
               <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
               <p class="text-xs text-muted truncate">
                 <span v-if="signup.referrer">via {{ signup.referrer }}</span>
-                <span v-else>Direct</span>
+                <span v-else-if="signup.hasUtm">via {{ signup.utmSource || 'paid ad' }} paid ad campaign</span>
+                <span v-else>via drect</span>
               </p>
             </div>
             <div class="text-xs text-muted shrink-0">
