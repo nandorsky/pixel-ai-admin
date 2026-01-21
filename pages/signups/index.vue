@@ -94,6 +94,11 @@ const columns: TableColumn<Signup>[] = [
   {
     accessorKey: 'referral_code',
     header: 'Referral Code'
+  },
+  {
+    id: 'referral_link',
+    header: 'Referral Link',
+    accessorFn: (row) => `https://getpixel.ai?ref=${row.referral_code}`
   }
 ]
 
@@ -108,7 +113,7 @@ const email = computed({
 
 const pagination = ref({
   pageIndex: 0,
-  pageSize: 10
+  pageSize: 50
 })
 </script>
 
@@ -215,6 +220,19 @@ const pagination = ref({
 
         <template #created_at-cell="{ row }">
           {{ formatDate(row.original.created_at) }}
+        </template>
+
+        <template #referral_link-cell="{ row }">
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-xs truncate max-w-[200px]">https://getpixel.ai?ref={{ row.original.referral_code }}</span>
+            <UButton
+              icon="i-lucide-copy"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              @click="copyToClipboard(`https://getpixel.ai?ref=${row.original.referral_code}`, 'Referral link')"
+            />
+          </div>
         </template>
       </UTable>
 

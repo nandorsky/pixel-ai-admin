@@ -6,11 +6,7 @@ definePageMeta({
 const supabase = useSupabase()
 const toast = useToast()
 
-const ALLOWED_EMAILS = [
-  'gil@metadata.io',
-  'nate.andorsky@metadata.io',
-  'lisa.sharapata@metadata.io'
-]
+const ALLOWED_DOMAIN = '@metadata.io'
 
 const email = ref('')
 const isLoading = ref(false)
@@ -40,10 +36,10 @@ async function sendMagicLink() {
     return
   }
 
-  if (!ALLOWED_EMAILS.includes(email.value.toLowerCase())) {
+  if (!email.value.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
     toast.add({
       title: 'Access denied',
-      description: 'This email is not authorized to access this application',
+      description: 'Only @metadata.io email addresses are allowed',
       color: 'error'
     })
     return

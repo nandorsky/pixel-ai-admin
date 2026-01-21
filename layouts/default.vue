@@ -10,8 +10,8 @@ async function logout() {
 }
 
 const links = [[{
-  label: 'Home',
-  icon: 'i-lucide-house',
+  label: 'Dashboard',
+  icon: 'i-lucide-layout-dashboard',
   to: '/',
   onSelect: () => {
     open.value = false
