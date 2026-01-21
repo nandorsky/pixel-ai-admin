@@ -2,6 +2,7 @@
 import { upperFirst } from 'scule'
 import type { TableColumn } from '@nuxt/ui'
 import { getPaginationRowModel } from '@tanstack/table-core'
+import { getSignupSource, getSourceColor } from '~/utils/signup-source'
 
 const supabase = useSupabase()
 
@@ -12,6 +13,7 @@ interface Signup {
   first_name: string | null
   last_name: string | null
   referral_code: string
+  utm_parameters: Record<string, string> | null
 }
 
 const toast = useToast()
@@ -21,7 +23,9 @@ const columnFilters = ref([{
   id: 'email',
   value: ''
 }])
-const columnVisibility = ref()
+const columnVisibility = ref({
+  source: true
+})
 const rowSelection = ref({})
 
 const data = ref<Signup[]>([])
@@ -31,7 +35,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code')
+    .select('id, created_at, email, first_name, last_name, referral_code, utm_parameters')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -86,6 +90,11 @@ const columns: TableColumn<Signup>[] = [
   {
     accessorKey: 'email',
     header: 'Email'
+  },
+  {
+    id: 'source',
+    header: 'Source',
+    accessorFn: (row) => getSignupSource(row)
   },
   {
     accessorKey: 'created_at',
@@ -216,6 +225,15 @@ const pagination = ref({
               @click="copyToClipboard(row.original.referral_code, 'Referral code')"
             />
           </div>
+        </template>
+
+        <template #source-cell="{ row }">
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
+            :style="{ backgroundColor: getSourceColor(getSignupSource(row.original)) }"
+          >
+            {{ getSignupSource(row.original) }}
+          </span>
         </template>
 
         <template #created_at-cell="{ row }">

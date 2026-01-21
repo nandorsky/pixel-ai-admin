@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { sub, format, formatDistanceToNow, startOfWeek, startOfDay, eachDayOfInterval } from 'date-fns'
-import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip } from '@unovis/vue'
+import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip, VisSingleContainer, VisDonut } from '@unovis/vue'
+import { Donut } from '@unovis/ts'
 
 const supabase = useSupabase()
 
@@ -119,6 +120,19 @@ const recentSignups = computed(() => {
     })
 })
 
+// Source breakdown for pie chart
+import { calculateSourceBreakdown, type SourceBreakdown } from '~/utils/signup-source'
+
+const sourceBreakdown = computed<SourceBreakdown[]>(() => calculateSourceBreakdown(signups.value))
+
+const pieValue = (d: SourceBreakdown) => d.value
+const pieColor = (d: SourceBreakdown) => d.color
+const pieTooltip = (d: any, i: number) => {
+  const item = sourceBreakdown.value[i]
+  if (item) return `${item.value}`
+  return ''
+}
+
 // Chart helpers
 const x = (_: ChartRecord, i: number) => i
 const y = (d: ChartRecord) => d.count
@@ -160,29 +174,57 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
         </div>
       </div>
 
-      <!-- Chart -->
-      <div class="mb-8">
-        <div class="flex items-baseline justify-between mb-4">
-          <h2 class="text-sm font-medium text-highlighted">Growth</h2>
-          <span class="text-xs text-muted">Last 30 days</span>
-        </div>
-        <div class="bg-elevated rounded-lg p-4 pt-8 ps-12">
-          <div v-if="loading" class="h-64 flex items-center justify-center">
-            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+      <!-- Charts Row -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <!-- Growth Chart -->
+        <div class="lg:col-span-2">
+          <div class="flex items-baseline justify-between mb-4">
+            <h2 class="text-sm font-medium text-highlighted">Growth</h2>
+            <span class="text-xs text-muted">Last 30 days</span>
           </div>
-          <VisXYContainer
-            v-else-if="chartData.length > 0"
-            :data="chartData"
-            :padding="{ top: 20 }"
-            class="h-64"
-          >
-            <VisLine :x="x" :y="y" color="var(--ui-primary)" />
-            <VisArea :x="x" :y="y" color="var(--ui-primary)" :opacity="0.1" />
-            <VisAxis type="x" :x="x" :tick-format="xTicks" />
-            <VisAxis type="y" :y="y" />
-            <VisCrosshair color="var(--ui-primary)" :template="tooltipTemplate" />
-            <VisTooltip />
-          </VisXYContainer>
+          <div class="bg-elevated rounded-lg p-4 pt-8 ps-12 h-72">
+            <div v-if="loading" class="h-full flex items-center justify-center">
+              <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+            </div>
+            <VisXYContainer
+              v-else-if="chartData.length > 0"
+              :data="chartData"
+              :padding="{ top: 20 }"
+              class="h-full"
+            >
+              <VisLine :x="x" :y="y" color="var(--ui-primary)" />
+              <VisArea :x="x" :y="y" color="var(--ui-primary)" :opacity="0.1" />
+              <VisAxis type="x" :x="x" :tick-format="xTicks" />
+              <VisAxis type="y" :y="y" />
+              <VisCrosshair color="var(--ui-primary)" :template="tooltipTemplate" />
+              <VisTooltip />
+            </VisXYContainer>
+          </div>
+        </div>
+
+        <!-- Source Breakdown Pie Chart -->
+        <div>
+          <div class="flex items-baseline justify-between mb-4">
+            <h2 class="text-sm font-medium text-highlighted">Sources</h2>
+          </div>
+          <div class="bg-elevated rounded-lg p-4 h-72">
+            <div v-if="loading" class="h-full flex items-center justify-center">
+              <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+            </div>
+            <div v-else-if="sourceBreakdown.length > 0" class="h-full flex flex-col overflow-hidden">
+              <VisSingleContainer :data="sourceBreakdown" class="flex-1 max-h-44 donut-chart">
+                <VisDonut :value="pieValue" :color="pieColor" :arc-width="30" :padAngle="0.02" />
+                <VisTooltip :triggers="{ [Donut.selectors.segment]: pieTooltip }" />
+              </VisSingleContainer>
+              <div class="flex flex-wrap justify-center gap-3 mt-2">
+                <div v-for="source in sourceBreakdown" :key="source.label" class="flex items-center gap-1.5 text-xs">
+                  <span class="size-2.5 rounded-full" :style="{ backgroundColor: source.color }" />
+                  <span class="text-muted">{{ source.label }}</span>
+                  <span class="text-highlighted font-medium">{{ source.value }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -230,7 +272,8 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
 </template>
 
 <style scoped>
-.unovis-xy-container {
+.unovis-xy-container,
+.donut-chart {
   --vis-crosshair-line-stroke-color: var(--ui-primary);
   --vis-crosshair-circle-stroke-color: var(--ui-bg);
   --vis-axis-grid-color: var(--ui-border);
