@@ -6,6 +6,13 @@ import { getSignupSource, getSourceColor } from '~/utils/signup-source'
 
 const supabase = useSupabase()
 
+interface LinkedInJson {
+  headline?: string
+  profilePicture?: string
+  firstName?: string
+  lastName?: string
+}
+
 interface Signup {
   id: string
   created_at: string
@@ -14,6 +21,7 @@ interface Signup {
   last_name: string | null
   referral_code: string
   utm_parameters: Record<string, string> | null
+  linkedin_json: LinkedInJson | null
 }
 
 const toast = useToast()
@@ -35,7 +43,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code, utm_parameters')
+    .select('id, created_at, email, first_name, last_name, referral_code, utm_parameters, linkedin_json')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -204,9 +212,26 @@ const pagination = ref({
         <template #name-cell="{ row }">
           <NuxtLink
             :to="`/signups/${row.original.id}`"
-            class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            class="flex items-center gap-3 hover:opacity-80"
           >
-            {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}
+            <img
+              v-if="row.original.linkedin_json?.profilePicture"
+              :src="row.original.linkedin_json.profilePicture"
+              :alt="`${row.original.first_name || ''} ${row.original.last_name || ''}`"
+              class="w-10 h-10 rounded-full object-cover shrink-0"
+            />
+            <div class="min-w-0">
+              <div class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
+                {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}
+              </div>
+              <div
+                v-if="row.original.linkedin_json?.headline"
+                class="text-xs text-muted truncate max-w-[250px]"
+                :title="row.original.linkedin_json.headline"
+              >
+                {{ row.original.linkedin_json.headline }}
+              </div>
+            </div>
           </NuxtLink>
         </template>
 

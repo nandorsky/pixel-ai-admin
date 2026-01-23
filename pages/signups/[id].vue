@@ -11,6 +11,25 @@ interface UtmParameters {
   utm_content?: string
 }
 
+interface LinkedInPosition {
+  title?: string
+  companyName?: string
+  companyLogo?: string
+  start?: { year?: number; month?: number }
+  end?: { year?: number; month?: number }
+}
+
+interface LinkedInJson {
+  headline?: string
+  summary?: string
+  profilePicture?: string
+  firstName?: string
+  lastName?: string
+  username?: string
+  geo?: { full?: string; city?: string; country?: string }
+  position?: LinkedInPosition[]
+}
+
 interface Signup {
   id: number
   created_at: string
@@ -24,6 +43,7 @@ interface Signup {
   source: string | null
   hear_about_us: string | null
   utm_parameters: UtmParameters | null
+  linkedin_json: LinkedInJson | null
 }
 
 const signup = ref<Signup | null>(null)
@@ -87,6 +107,17 @@ const referrerDisplay = computed(() => {
   }
   return referrer.value.email
 })
+
+const currentPosition = computed(() => {
+  if (!signup.value?.linkedin_json?.position?.length) return null
+  // Find position with no end date (current job)
+  return signup.value.linkedin_json.position.find(p => !p.end?.year) || signup.value.linkedin_json.position[0]
+})
+
+const linkedInProfileUrl = computed(() => {
+  if (!signup.value?.linkedin_json?.username) return null
+  return `https://www.linkedin.com/in/${signup.value.linkedin_json.username}`
+})
 </script>
 
 <template>
@@ -133,6 +164,53 @@ const referrerDisplay = computed(() => {
               <dd class="mt-1 font-medium">{{ signup.role || '—' }}</dd>
             </div>
           </dl>
+        </UCard>
+
+        <UCard v-if="signup.linkedin_json">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold">LinkedIn Profile</h3>
+              <a
+                v-if="linkedInProfileUrl"
+                :href="linkedInProfileUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                View Profile
+                <UIcon name="i-lucide-external-link" class="w-3 h-3" />
+              </a>
+            </div>
+          </template>
+
+          <div class="flex gap-4">
+            <img
+              v-if="signup.linkedin_json.profilePicture"
+              :src="signup.linkedin_json.profilePicture"
+              :alt="fullName"
+              class="w-20 h-20 rounded-full object-cover shrink-0"
+            />
+            <div class="min-w-0 flex-1">
+              <p v-if="signup.linkedin_json.headline" class="font-medium text-lg">
+                {{ signup.linkedin_json.headline }}
+              </p>
+              <p v-if="signup.linkedin_json.geo?.full" class="text-sm text-muted mt-1">
+                {{ signup.linkedin_json.geo.full }}
+              </p>
+              <div v-if="currentPosition" class="mt-3 flex items-center gap-2">
+                <img
+                  v-if="currentPosition.companyLogo"
+                  :src="currentPosition.companyLogo"
+                  :alt="currentPosition.companyName"
+                  class="w-8 h-8 rounded object-cover"
+                />
+                <div>
+                  <p class="text-sm font-medium">{{ currentPosition.title }}</p>
+                  <p class="text-xs text-muted">{{ currentPosition.companyName }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </UCard>
 
         <UCard>
