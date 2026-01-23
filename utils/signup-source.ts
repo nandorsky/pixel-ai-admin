@@ -8,6 +8,10 @@ export interface SourceInfo {
   color: string
 }
 
+export const SOURCE_LABELS: Record<string, string> = {
+  'cold_outreach': 'Cold Email'
+}
+
 export const SOURCE_COLORS: Record<string, string> = {
   'Referral Link': '#10b981',
   'Metadata': '#0077b5',
@@ -15,14 +19,16 @@ export const SOURCE_COLORS: Record<string, string> = {
   'Reddit': '#ff4500',
   'Google': '#4285f4',
   'Facebook': '#1877f2',
-  'Twitter': '#1da1f2'
+  'Twitter': '#1da1f2',
+  'Cold Email': '#f97316'
 }
 
 export const DEFAULT_COLORS = ['#8b5cf6', '#ec4899', '#f59e0b', '#14b8a6', '#6366f1', '#84cc16']
 
 export function getSignupSource(signup: SignupWithUtm): string {
   if (signup.utm_parameters && signup.utm_parameters.utm_medium) {
-    return signup.utm_parameters.utm_medium
+    const medium = signup.utm_parameters.utm_medium
+    return SOURCE_LABELS[medium] || medium
   }
   return 'Referral Link'
 }
