@@ -6,11 +6,29 @@ import { getSignupSource, getSourceColor } from '~/utils/signup-source'
 
 const supabase = useSupabase()
 
+interface LinkedInProfilePicture {
+  url: string
+  width: number
+  height: number
+}
+
 interface LinkedInJson {
   headline?: string
   profilePicture?: string
+  profilePictures?: LinkedInProfilePicture[]
   firstName?: string
   lastName?: string
+}
+
+function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
+  if (!linkedin) return null
+  if (linkedin.profilePicture) return linkedin.profilePicture
+  if (linkedin.profilePictures?.length) {
+    // Prefer 200x200 size, fallback to first available
+    const preferred = linkedin.profilePictures.find(p => p.width === 200) || linkedin.profilePictures[0]
+    return preferred?.url || null
+  }
+  return null
 }
 
 interface Signup {
@@ -215,8 +233,8 @@ const pagination = ref({
             class="flex items-center gap-3 hover:opacity-80"
           >
             <img
-              v-if="row.original.linkedin_json?.profilePicture"
-              :src="row.original.linkedin_json.profilePicture"
+              v-if="getLinkedInPhoto(row.original.linkedin_json)"
+              :src="getLinkedInPhoto(row.original.linkedin_json)!"
               :alt="`${row.original.first_name || ''} ${row.original.last_name || ''}`"
               class="w-10 h-10 rounded-full object-cover shrink-0"
             />

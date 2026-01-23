@@ -19,15 +19,34 @@ interface LinkedInPosition {
   end?: { year?: number; month?: number }
 }
 
+interface LinkedInProfilePicture {
+  url: string
+  width: number
+  height: number
+}
+
 interface LinkedInJson {
   headline?: string
   summary?: string
   profilePicture?: string
+  profilePictures?: LinkedInProfilePicture[]
   firstName?: string
   lastName?: string
   username?: string
   geo?: { full?: string; city?: string; country?: string }
   position?: LinkedInPosition[]
+}
+
+function getLinkedInPhoto(linkedin: LinkedInJson | null | undefined): string | null {
+  if (!linkedin) return null
+  if (linkedin.profilePicture) return linkedin.profilePicture
+  if (linkedin.profilePictures?.length) {
+    // Prefer 400x400 size for detail page, fallback to largest available
+    const preferred = linkedin.profilePictures.find(p => p.width === 400)
+      || linkedin.profilePictures[linkedin.profilePictures.length - 1]
+    return preferred?.url || null
+  }
+  return null
 }
 
 interface Signup {
@@ -185,8 +204,8 @@ const linkedInProfileUrl = computed(() => {
 
           <div class="flex gap-4">
             <img
-              v-if="signup.linkedin_json.profilePicture"
-              :src="signup.linkedin_json.profilePicture"
+              v-if="getLinkedInPhoto(signup.linkedin_json)"
+              :src="getLinkedInPhoto(signup.linkedin_json)!"
               :alt="fullName"
               class="w-20 h-20 rounded-full object-cover shrink-0"
             />
