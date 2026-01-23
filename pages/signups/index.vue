@@ -18,6 +18,7 @@ interface LinkedInJson {
   profilePictures?: LinkedInProfilePicture[]
   firstName?: string
   lastName?: string
+  username?: string
 }
 
 function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
@@ -134,6 +135,11 @@ const columns: TableColumn<Signup>[] = [
     id: 'referral_link',
     header: 'Referral Link',
     accessorFn: (row) => `https://getpixel.ai?ref=${row.referral_code}`
+  },
+  {
+    id: 'linkedin',
+    header: 'LinkedIn',
+    accessorFn: (row) => row.linkedin_json?.username ? `https://linkedin.com/in/${row.linkedin_json.username}` : null
   }
 ]
 
@@ -294,6 +300,21 @@ const pagination = ref({
               @click="copyToClipboard(`https://getpixel.ai?ref=${row.original.referral_code}`, 'Referral link')"
             />
           </div>
+        </template>
+
+        <template #linkedin-cell="{ row }">
+          <a
+            v-if="row.original.linkedin_json?.username"
+            :href="`https://linkedin.com/in/${row.original.linkedin_json.username}`"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-blue-600 dark:text-blue-400 hover:underline text-xs flex items-center gap-1"
+            @click.stop
+          >
+            View
+            <UIcon name="i-lucide-external-link" class="w-3 h-3" />
+          </a>
+          <span v-else class="text-muted text-xs">—</span>
         </template>
       </UTable>
 

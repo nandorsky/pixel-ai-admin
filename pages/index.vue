@@ -5,6 +5,18 @@ import { Donut } from '@unovis/ts'
 
 const supabase = useSupabase()
 
+interface LinkedInProfilePicture {
+  url: string
+  width: number
+  height: number
+}
+
+interface LinkedInJson {
+  headline?: string
+  profilePicture?: string
+  profilePictures?: LinkedInProfilePicture[]
+}
+
 interface Signup {
   id: number
   email: string
@@ -14,6 +26,17 @@ interface Signup {
   referred_by: string | null
   created_at: string
   utm_parameters: Record<string, string> | null
+  linkedin_json: LinkedInJson | null
+}
+
+function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
+  if (!linkedin) return null
+  if (linkedin.profilePicture) return linkedin.profilePicture
+  if (linkedin.profilePictures?.length) {
+    const preferred = linkedin.profilePictures.find(p => p.width === 100) || linkedin.profilePictures[0]
+    return preferred?.url || null
+  }
+  return null
 }
 
 type ChartRecord = { date: Date; count: number }
@@ -39,7 +62,7 @@ const todaySignups = computed(() => {
 onMounted(async () => {
   const { data, error } = await supabase
     .from('signups')
-    .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters')
+    .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters, linkedin_json')
     .order('created_at', { ascending: true })
 
   if (!error && data) {
@@ -115,7 +138,9 @@ const recentSignups = computed(() => {
         hasUtm,
         utmSource,
         date: format(new Date(s.created_at), 'MMM d'),
-        time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true })
+        time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true }),
+        linkedinPhoto: getLinkedInPhoto(s.linkedin_json),
+        linkedinHeadline: s.linkedin_json?.headline || null
       }
     })
 })
@@ -250,15 +275,22 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
             :to="`/signups/${signup.id}`"
             class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
           >
-            <div class="size-9 rounded-full bg-default flex items-center justify-center text-sm font-medium text-muted shrink-0">
+            <img
+              v-if="signup.linkedinPhoto"
+              :src="signup.linkedinPhoto"
+              :alt="signup.name || signup.email"
+              class="size-9 rounded-full object-cover shrink-0"
+            />
+            <div v-else class="size-9 rounded-full bg-default flex items-center justify-center text-sm font-medium text-muted shrink-0">
               {{ (signup.name || signup.email).charAt(0).toUpperCase() }}
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
-              <p class="text-xs text-muted truncate">
+              <p v-if="signup.linkedinHeadline" class="text-xs text-muted truncate">{{ signup.linkedinHeadline }}</p>
+              <p v-else class="text-xs text-muted truncate">
                 <span v-if="signup.referrer">via {{ signup.referrer }}</span>
                 <span v-else-if="signup.hasUtm">via {{ signup.utmSource || 'paid ad' }} paid ad campaign</span>
-                <span v-else>via drect</span>
+                <span v-else>via direct</span>
               </p>
             </div>
             <div class="text-xs text-muted shrink-0">
