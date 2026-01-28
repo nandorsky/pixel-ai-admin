@@ -31,6 +31,13 @@ const links = [[{
     open.value = false
   }
 }, {
+  label: 'Leads',
+  icon: 'i-lucide-target',
+  to: '/leads',
+  onSelect: () => {
+    open.value = false
+  }
+}, {
   label: 'Network',
   icon: 'i-lucide-git-branch',
   to: '/network',
