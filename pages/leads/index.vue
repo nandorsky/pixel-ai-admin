@@ -5,6 +5,17 @@ import { getPaginationRowModel } from '@tanstack/table-core'
 
 const supabase = useSupabase()
 
+interface BetterEnrichResponse {
+  id: string
+  data?: {
+    email?: string
+    ESP?: string
+    status?: string
+    verifier?: string
+  }
+  status: string
+}
+
 interface Lead {
   id: number
   created_at: string
@@ -16,6 +27,7 @@ interface Lead {
   linkedinTitle: string
   type: string
   profileImg: string | null
+  betterenrich_response: BetterEnrichResponse | null
 }
 
 const toast = useToast()
@@ -31,15 +43,23 @@ const rowSelection = ref({})
 const data = ref<Lead[]>([])
 const isFetching = ref(true)
 const stats = ref({ total: 0, qualified: 0, unqualified: 0 })
+const searchQuery = ref('')
 
-async function fetchLeads() {
+async function fetchLeads(search?: string) {
   isFetching.value = true
 
   // Fetch leads for table
-  const { data: leads, error } = await supabase
+  let query = supabase
     .from('leads')
     .select('*')
     .order('created_at', { ascending: false })
+
+  // Add search filter if provided
+  if (search && search.trim()) {
+    query = query.ilike('fullName', `%${search.trim()}%`)
+  }
+
+  const { data: leads, error } = await query
 
   if (error) {
     toast.add({
@@ -99,6 +119,11 @@ const columns: TableColumn<Lead>[] = [
     header: 'Name'
   },
   {
+    id: 'email',
+    header: 'Email',
+    accessorFn: (row) => row.betterenrich_response?.data?.email || null
+  },
+  {
     accessorKey: 'linkedinTitle',
     header: 'Title'
   },
@@ -116,19 +141,20 @@ const columns: TableColumn<Lead>[] = [
   }
 ]
 
-const nameFilter = computed({
-  get: (): string => {
-    return (table.value?.tableApi?.getColumn('fullName')?.getFilterValue() as string) || ''
-  },
-  set: (value: string) => {
-    table.value?.tableApi?.getColumn('fullName')?.setFilterValue(value || undefined)
-  }
-})
-
 const pagination = ref({
   pageIndex: 0,
   pageSize: 50
 })
+
+// Debounced search
+let searchTimeout: ReturnType<typeof setTimeout> | null = null
+function onSearch(value: string) {
+  searchQuery.value = value
+  if (searchTimeout) clearTimeout(searchTimeout)
+  searchTimeout = setTimeout(() => {
+    fetchLeads(value)
+  }, 300)
+}
 
 </script>
 
@@ -161,7 +187,8 @@ const pagination = ref({
 
       <div class="flex flex-wrap items-center justify-between gap-1.5">
         <UInput
-          v-model="nameFilter"
+          :model-value="searchQuery"
+          @update:model-value="onSearch"
           class="max-w-sm"
           icon="i-lucide-search"
           placeholder="Search by name..."
@@ -243,6 +270,20 @@ const pagination = ref({
               <UIcon name="i-lucide-external-link" class="w-4 h-4" />
             </a>
           </div>
+        </template>
+
+        <template #email-cell="{ row }">
+          <div v-if="row.original.betterenrich_response?.data?.email" class="flex items-center gap-2">
+            <span class="text-sm">{{ row.original.betterenrich_response.data.email }}</span>
+            <UButton
+              icon="i-lucide-copy"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              @click="copyToClipboard(row.original.betterenrich_response.data.email, 'Email')"
+            />
+          </div>
+          <span v-else class="text-muted text-sm">—</span>
         </template>
 
         <template #linkedinTitle-cell="{ row }">
