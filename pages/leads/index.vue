@@ -258,7 +258,12 @@ function onSearch(value: string) {
               :alt="row.original.fullName"
               class="w-8 h-8 rounded-full object-cover shrink-0"
             />
-            <span class="font-medium">{{ row.original.fullName }}</span>
+            <NuxtLink
+              :to="`/leads/${row.original.id}`"
+              class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {{ row.original.fullName }}
+            </NuxtLink>
             <a
               v-if="row.original.linkedinUrl"
               :href="row.original.linkedinUrl"
