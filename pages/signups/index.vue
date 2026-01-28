@@ -62,7 +62,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code, utm_parameters, linkedin_json')
+    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -112,7 +112,8 @@ const columns: TableColumn<Signup>[] = [
   {
     id: 'name',
     header: 'Name',
-    accessorFn: (row) => `${row.first_name || ''} ${row.last_name || ''}`.trim()
+    accessorFn: (row) => `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+    size: 200
   },
   {
     accessorKey: 'email',
@@ -244,6 +245,9 @@ const pagination = ref({
               :alt="`${row.original.first_name || ''} ${row.original.last_name || ''}`"
               class="w-10 h-10 rounded-full object-cover shrink-0"
             />
+            <div v-else class="w-10 h-10 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+              {{ [row.original.first_name, row.original.last_name].filter(Boolean).map(n => n.charAt(0)).join('').toUpperCase() || row.original.email.charAt(0).toUpperCase() }}
+            </div>
             <div class="min-w-0">
               <div class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
                 {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}

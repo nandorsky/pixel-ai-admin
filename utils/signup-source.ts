@@ -13,7 +13,8 @@ export const SOURCE_LABELS: Record<string, string> = {
 }
 
 export const SOURCE_COLORS: Record<string, string> = {
-  'Referral Link': '#10b981',
+  'Referral': '#10b981',
+  'Direct': '#6b7280',
   'Metadata': '#0077b5',
   'LinkedIn': '#0a66c2',
   'Reddit': '#ff4500',
@@ -26,11 +27,24 @@ export const SOURCE_COLORS: Record<string, string> = {
 export const DEFAULT_COLORS = ['#8b5cf6', '#ec4899', '#f59e0b', '#14b8a6', '#6366f1', '#84cc16']
 
 export function getSignupSource(signup: SignupWithUtm): string {
+  // Check for UTM parameters first
   if (signup.utm_parameters && signup.utm_parameters.utm_medium) {
     const medium = signup.utm_parameters.utm_medium
     return SOURCE_LABELS[medium] || medium
   }
-  return 'Referral Link'
+
+  // If referred_by exists, check if it's a self-generated code (has dashes like IX2O-AHSS-2CCH)
+  if (signup.referred_by) {
+    // Self-generated referral codes have dashes
+    if (signup.referred_by.includes('-')) {
+      return 'Direct'
+    }
+    // Real referral from someone else (no dashes)
+    return 'Referral'
+  }
+
+  // No UTM and no referral = direct
+  return 'Direct'
 }
 
 export function getSourceColor(source: string, index: number = 0): string {

@@ -281,8 +281,8 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
               :alt="signup.name || signup.email"
               class="size-9 rounded-full object-cover shrink-0"
             />
-            <div v-else class="size-9 rounded-full bg-default flex items-center justify-center text-sm font-medium text-muted shrink-0">
-              {{ (signup.name || signup.email).charAt(0).toUpperCase() }}
+            <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+              {{ signup.name ? signup.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.email.charAt(0).toUpperCase() }}
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
