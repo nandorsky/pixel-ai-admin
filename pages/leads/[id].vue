@@ -3,17 +3,6 @@ const route = useRoute()
 const supabase = useSupabase()
 const toast = useToast()
 
-interface BetterEnrichResponse {
-  id: string
-  data?: {
-    email?: string
-    ESP?: string
-    status?: string
-    verifier?: string
-  }
-  status: string
-}
-
 interface Lead {
   id: number
   created_at: string
@@ -25,7 +14,7 @@ interface Lead {
   linkedinTitle: string
   type: string
   profileImg: string | null
-  betterenrich_response: BetterEnrichResponse | null
+  email_address: string | null
 }
 
 const lead = ref<Lead | null>(null)
@@ -73,7 +62,7 @@ function copyToClipboard(text: string, label: string) {
   })
 }
 
-const email = computed(() => lead.value?.betterenrich_response?.data?.email || null)
+const email = computed(() => lead.value?.email_address || null)
 
 const isQualified = computed(() => {
   if (!lead.value) return false
@@ -190,32 +179,6 @@ const isQualified = computed(() => {
                 </a>
                 <span v-else class="text-muted">—</span>
               </dd>
-            </div>
-          </dl>
-        </UCard>
-
-        <!-- Email Enrichment -->
-        <UCard v-if="lead.betterenrich_response">
-          <template #header>
-            <h3 class="font-semibold">Email Enrichment</h3>
-          </template>
-
-          <dl class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <dt class="text-sm text-muted">Email</dt>
-              <dd class="mt-1 font-medium">{{ lead.betterenrich_response.data?.email || '—' }}</dd>
-            </div>
-            <div>
-              <dt class="text-sm text-muted">Status</dt>
-              <dd class="mt-1 font-medium">{{ lead.betterenrich_response.status || '—' }}</dd>
-            </div>
-            <div>
-              <dt class="text-sm text-muted">ESP</dt>
-              <dd class="mt-1 font-medium">{{ lead.betterenrich_response.data?.ESP || '—' }}</dd>
-            </div>
-            <div>
-              <dt class="text-sm text-muted">Verifier</dt>
-              <dd class="mt-1 font-medium">{{ lead.betterenrich_response.data?.verifier || '—' }}</dd>
             </div>
           </dl>
         </UCard>

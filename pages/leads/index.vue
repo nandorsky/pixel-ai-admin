@@ -5,17 +5,6 @@ import { getPaginationRowModel } from '@tanstack/table-core'
 
 const supabase = useSupabase()
 
-interface BetterEnrichResponse {
-  id: string
-  data?: {
-    email?: string
-    ESP?: string
-    status?: string
-    verifier?: string
-  }
-  status: string
-}
-
 interface Lead {
   id: number
   created_at: string
@@ -27,16 +16,13 @@ interface Lead {
   linkedinTitle: string
   type: string
   profileImg: string | null
-  betterenrich_response: BetterEnrichResponse | null
+  email_address: string | null
 }
 
 const toast = useToast()
 const table = useTemplateRef('table')
 
-const columnFilters = ref([{
-  id: 'fullName',
-  value: ''
-}])
+const columnFilters = ref([])
 const columnVisibility = ref({})
 const rowSelection = ref({})
 
@@ -56,10 +42,13 @@ async function fetchLeads(search?: string) {
 
   // Add search filter if provided
   if (search && search.trim()) {
-    query = query.ilike('fullName', `%${search.trim()}%`)
+    query = query.ilike('firstName', `%${search.trim()}%`)
   }
 
   const { data: leads, error } = await query
+
+  console.log('Raw leads data:', leads)
+  console.log('First lead sample:', leads?.[0])
 
   if (error) {
     toast.add({
@@ -69,6 +58,7 @@ async function fetchLeads(search?: string) {
     })
   } else {
     data.value = leads || []
+    console.log('Data set to:', data.value.length, 'records')
   }
 
   // Fetch counts separately
@@ -87,7 +77,7 @@ async function fetchLeads(search?: string) {
   isFetching.value = false
 }
 
-onMounted(() => {
+onNuxtReady(() => {
   fetchLeads()
 })
 
@@ -112,32 +102,38 @@ function formatDate(dateString: string) {
 const columns: TableColumn<Lead>[] = [
   {
     accessorKey: 'id',
-    header: 'ID'
+    header: 'ID',
+    accessorFn: (row) => row.id ?? ''
   },
   {
-    accessorKey: 'fullName',
-    header: 'Name'
+    accessorKey: 'firstName',
+    header: 'Name',
+    accessorFn: (row) => row.firstName ?? row.fullName ?? ''
   },
   {
-    id: 'email',
+    accessorKey: 'email_address',
     header: 'Email',
-    accessorFn: (row) => row.betterenrich_response?.data?.email || null
+    accessorFn: (row) => row.email_address ?? ''
   },
   {
     accessorKey: 'linkedinTitle',
-    header: 'Title'
+    header: 'Title',
+    accessorFn: (row) => row.linkedinTitle ?? ''
   },
   {
     accessorKey: 'type',
-    header: 'Type'
+    header: 'Type',
+    accessorFn: (row) => row.type ?? ''
   },
   {
     accessorKey: 'qualified',
-    header: 'Qualified'
+    header: 'Qualified',
+    accessorFn: (row) => row.qualified ?? false
   },
   {
     accessorKey: 'custom_prompt',
-    header: 'Email Copy'
+    header: 'Email Copy',
+    accessorFn: (row) => row.custom_prompt ?? ''
   }
 ]
 
@@ -250,19 +246,19 @@ function onSearch(value: string) {
           <span class="font-mono text-xs">{{ row.original.id }}</span>
         </template>
 
-        <template #fullName-cell="{ row }">
+        <template #firstName-cell="{ row }">
           <div class="flex items-center gap-3">
             <img
               v-if="row.original.profileImg"
               :src="row.original.profileImg"
-              :alt="row.original.fullName"
+              :alt="row.original.firstName"
               class="w-8 h-8 rounded-full object-cover shrink-0"
             />
             <NuxtLink
               :to="`/leads/${row.original.id}`"
               class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
             >
-              {{ row.original.fullName }}
+              {{ row.original.firstName || row.original.fullName || '—' }}
             </NuxtLink>
             <a
               v-if="row.original.linkedinUrl"
@@ -277,15 +273,15 @@ function onSearch(value: string) {
           </div>
         </template>
 
-        <template #email-cell="{ row }">
-          <div v-if="row.original.betterenrich_response?.data?.email" class="flex items-center gap-2">
-            <span class="text-sm">{{ row.original.betterenrich_response.data.email }}</span>
+        <template #email_address-cell="{ row }">
+          <div v-if="row.original.email_address" class="flex items-center gap-2">
+            <span class="text-sm">{{ row.original.email_address }}</span>
             <UButton
               icon="i-lucide-copy"
               color="neutral"
               variant="ghost"
               size="xs"
-              @click="copyToClipboard(row.original.betterenrich_response.data.email, 'Email')"
+              @click="copyToClipboard(row.original.email_address, 'Email')"
             />
           </div>
           <span v-else class="text-muted text-sm">—</span>
