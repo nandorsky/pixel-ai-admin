@@ -19,6 +19,7 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
+    emailBisonApiKey: process.env.EMAIL_BISON_API_KEY,
     public: {
       supabaseUrl: process.env.SUPABASE_URL,
       supabaseKey: process.env.SUPABASE_KEY
