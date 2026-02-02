@@ -9,6 +9,8 @@ export default defineEventHandler(async (event) => {
   if (query.folder) params.append('folder', String(query.folder))
   if (query.read !== undefined) params.append('read', String(query.read))
   if (query.campaign_id) params.append('campaign_id', String(query.campaign_id))
+  if (query.page) params.append('page', String(query.page))
+  if (query.per_page) params.append('per_page', String(query.per_page))
 
   const url = `https://send.patent355.com/api/replies${params.toString() ? `?${params.toString()}` : ''}`
 

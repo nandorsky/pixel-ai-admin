@@ -41,13 +41,14 @@ interface Signup {
   referral_code: string
   utm_parameters: Record<string, string> | null
   linkedin_json: LinkedInJson | null
+  product_access: boolean | null
 }
 
 const toast = useToast()
 const table = useTemplateRef('table')
 
 const columnFilters = ref([{
-  id: 'email',
+  id: 'name',
   value: ''
 }])
 const columnVisibility = ref({
@@ -62,7 +63,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json')
+    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json, product_access')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -116,8 +117,8 @@ const columns: TableColumn<Signup>[] = [
     size: 200
   },
   {
-    accessorKey: 'email',
-    header: 'Email'
+    accessorKey: 'product_access',
+    header: 'Access'
   },
   {
     id: 'source',
@@ -144,12 +145,12 @@ const columns: TableColumn<Signup>[] = [
   }
 ]
 
-const email = computed({
+const searchFilter = computed({
   get: (): string => {
-    return (table.value?.tableApi?.getColumn('email')?.getFilterValue() as string) || ''
+    return (table.value?.tableApi?.getColumn('name')?.getFilterValue() as string) || ''
   },
   set: (value: string) => {
-    table.value?.tableApi?.getColumn('email')?.setFilterValue(value || undefined)
+    table.value?.tableApi?.getColumn('name')?.setFilterValue(value || undefined)
   }
 })
 
@@ -172,7 +173,7 @@ const pagination = ref({
     <template #body>
       <div class="flex flex-wrap items-center justify-between gap-1.5">
         <UInput
-          v-model="email"
+          v-model="searchFilter"
           class="max-w-sm"
           icon="i-lucide-search"
           placeholder="Search..."
@@ -252,6 +253,9 @@ const pagination = ref({
               <div class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
                 {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}
               </div>
+              <div class="text-xs text-muted truncate">
+                {{ row.original.email }}
+              </div>
               <div
                 v-if="row.original.linkedin_json?.headline"
                 class="text-xs text-muted truncate max-w-[250px]"
@@ -263,8 +267,17 @@ const pagination = ref({
           </NuxtLink>
         </template>
 
-        <template #email-cell="{ row }">
-          {{ row.original.email }}
+        <template #product_access-cell="{ row }">
+          <UIcon
+            v-if="row.original.product_access"
+            name="i-lucide-check"
+            class="w-5 h-5 text-green-600"
+          />
+          <UIcon
+            v-else
+            name="i-lucide-x"
+            class="w-5 h-5 text-red-500"
+          />
         </template>
 
         <template #referral_code-cell="{ row }">

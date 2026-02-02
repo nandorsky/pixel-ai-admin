@@ -2,16 +2,8 @@
 import type { NavigationMenuItem } from '@nuxt/ui'
 
 const supabase = useSupabase()
-const route = useRoute()
 const open = ref(false)
 const collapsed = ref(false)
-
-// Auto-collapse sidebar on inbox page
-watch(() => route.path, (path) => {
-  if (path.startsWith('/inbox')) {
-    collapsed.value = true
-  }
-}, { immediate: true })
 
 async function logout() {
   await supabase.auth.signOut()
@@ -40,16 +32,16 @@ const links = [[{
     open.value = false
   }
 }, {
-  label: 'Leads',
-  icon: 'i-lucide-target',
-  to: '/leads',
+  label: 'Inbox',
+  icon: 'i-lucide-mail',
+  to: '/inbox',
   onSelect: () => {
     open.value = false
   }
 }, {
-  label: 'Inbox',
-  icon: 'i-lucide-mail',
-  to: '/inbox',
+  label: 'Campaigns',
+  icon: 'i-lucide-megaphone',
+  to: '/campaigns',
   onSelect: () => {
     open.value = false
   }
