@@ -121,22 +121,57 @@ const codeToUser = computed(() => {
   return map
 })
 
+// Top referrers (excluding internal @metadata.io emails)
+const topReferrers = computed(() => {
+  const referralCounts = new Map<string, { id: number; code: string; count: number; email: string; name: string; linkedinPhoto: string | null; referredPeople: { id: number; name: string; photo: string | null }[] }>()
+
+  // Count referrals for each referral code
+  signups.value.forEach(s => {
+    if (s.referred_by) {
+      const referrer = signups.value.find(r => r.referral_code === s.referred_by)
+      if (referrer && !referrer.email.toLowerCase().endsWith('@metadata.io') && referrer.email.toLowerCase() !== 'nate@patent355.com') {
+        const referredPerson = {
+          id: s.id,
+          name: formatName(s.first_name, s.last_name),
+          photo: getLinkedInPhoto(s.linkedin_json)
+        }
+        const existing = referralCounts.get(s.referred_by)
+        if (existing) {
+          existing.count++
+          existing.referredPeople.push(referredPerson)
+        } else {
+          referralCounts.set(s.referred_by, {
+            id: referrer.id,
+            code: s.referred_by,
+            count: 1,
+            email: referrer.email,
+            name: formatName(referrer.first_name, referrer.last_name),
+            linkedinPhoto: getLinkedInPhoto(referrer.linkedin_json),
+            referredPeople: [referredPerson]
+          })
+        }
+      }
+    }
+  })
+
+  return [...referralCounts.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+})
+
 // Recent signups
 const recentSignups = computed(() => {
   return [...signups.value]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 8)
     .map(s => {
-      const referrer = s.referred_by ? codeToUser.value.get(s.referred_by) : null
-      const hasUtm = s.utm_parameters && Object.keys(s.utm_parameters).length > 0
-      const utmSource = s.utm_parameters?.utm_medium || null
+      const source = getSignupSource(s)
       return {
         id: s.id,
         email: s.email,
         name: formatName(s.first_name, s.last_name),
-        referrer: referrer?.name || referrer?.email || null,
-        hasUtm,
-        utmSource,
+        source,
+        sourceColor: getSourceColor(source),
         date: format(new Date(s.created_at), 'MMM d'),
         time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true }),
         linkedinPhoto: getLinkedInPhoto(s.linkedin_json),
@@ -146,7 +181,7 @@ const recentSignups = computed(() => {
 })
 
 // Source breakdown for pie chart
-import { calculateSourceBreakdown, type SourceBreakdown } from '~/utils/signup-source'
+import { calculateSourceBreakdown, getSignupSource, getSourceColor, type SourceBreakdown } from '~/utils/signup-source'
 
 const sourceBreakdown = computed<SourceBreakdown[]>(() => calculateSourceBreakdown(signups.value))
 
@@ -253,50 +288,124 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
         </div>
       </div>
 
-      <!-- Recent Signups -->
-      <div>
-        <div class="flex items-baseline justify-between mb-4">
-          <h2 class="text-sm font-medium text-highlighted">Recent Signups</h2>
-          <NuxtLink to="/signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
+      <!-- Top Referrers & Recent Signups -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Top Referrers -->
+        <div>
+          <div class="flex items-baseline justify-between mb-4">
+            <h2 class="text-sm font-medium text-highlighted">Top Referrers</h2>
+          </div>
+
+          <div v-if="loading" class="flex items-center justify-center h-32">
+            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+          </div>
+
+          <div v-else-if="topReferrers.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
+            No referrals yet
+          </div>
+
+          <div v-else class="bg-elevated rounded-lg divide-y divide-default">
+            <NuxtLink
+              v-for="referrer in topReferrers"
+              :key="referrer.code"
+              :to="`/signups/${referrer.id}`"
+              class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
+            >
+              <img
+                v-if="referrer.linkedinPhoto"
+                :src="referrer.linkedinPhoto"
+                :alt="referrer.name || referrer.email"
+                class="size-9 rounded-full object-cover shrink-0"
+              />
+              <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+                {{ referrer.name ? referrer.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : referrer.email.charAt(0).toUpperCase() }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-highlighted truncate">{{ referrer.name || referrer.email }}</p>
+                <div class="flex items-center gap-1.5 mt-1">
+                  <UIcon name="i-lucide-arrow-right" class="size-3 text-muted shrink-0" />
+                  <div class="flex -space-x-1">
+                    <template v-for="(person, idx) in referrer.referredPeople.slice(0, 5)" :key="person.id">
+                      <img
+                        v-if="person.photo"
+                        :src="person.photo"
+                        :alt="person.name"
+                        :title="person.name"
+                        class="size-5 rounded-full object-cover"
+                        :style="{ zIndex: 5 - idx }"
+                      />
+                      <div
+                        v-else
+                        :title="person.name"
+                        class="size-5 rounded-full bg-neutral-300 dark:bg-neutral-600 flex items-center justify-center text-xs font-medium text-muted"
+                        :style="{ zIndex: 5 - idx }"
+                      >
+                        {{ person.name ? person.name.charAt(0).toUpperCase() : '?' }}
+                      </div>
+                    </template>
+                    <div
+                      v-if="referrer.referredPeople.length > 5"
+                      class="size-5 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted"
+                    >
+                      +{{ referrer.referredPeople.length - 5 }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <p class="text-lg font-semibold text-highlighted">{{ referrer.count }}</p>
+                <p class="text-xs text-muted">{{ referrer.count === 1 ? 'referral' : 'referrals' }}</p>
+              </div>
+            </NuxtLink>
+          </div>
         </div>
 
-        <div v-if="loading" class="flex items-center justify-center h-32">
-          <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-        </div>
+        <!-- Recent Signups -->
+        <div>
+          <div class="flex items-baseline justify-between mb-4">
+            <h2 class="text-sm font-medium text-highlighted">Recent Signups</h2>
+            <NuxtLink to="/signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
+          </div>
 
-        <div v-else-if="recentSignups.length === 0" class="text-center py-12 text-muted text-sm">
-          No signups yet
-        </div>
+          <div v-if="loading" class="flex items-center justify-center h-32">
+            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+          </div>
 
-        <div v-else class="bg-elevated rounded-lg divide-y divide-default">
-          <NuxtLink
-            v-for="signup in recentSignups"
-            :key="signup.id"
-            :to="`/signups/${signup.id}`"
-            class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
-          >
-            <img
-              v-if="signup.linkedinPhoto"
-              :src="signup.linkedinPhoto"
-              :alt="signup.name || signup.email"
-              class="size-9 rounded-full object-cover shrink-0"
-            />
-            <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
-              {{ signup.name ? signup.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.email.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
-              <p v-if="signup.linkedinHeadline" class="text-xs text-muted truncate">{{ signup.linkedinHeadline }}</p>
-              <p v-else class="text-xs text-muted truncate">
-                <span v-if="signup.referrer">via {{ signup.referrer }}</span>
-                <span v-else-if="signup.hasUtm">via {{ signup.utmSource || 'paid ad' }} paid ad campaign</span>
-                <span v-else>via direct</span>
-              </p>
-            </div>
-            <div class="text-xs text-muted shrink-0">
-              {{ signup.time_ago }}
-            </div>
-          </NuxtLink>
+          <div v-else-if="recentSignups.length === 0" class="text-center py-12 text-muted text-sm">
+            No signups yet
+          </div>
+
+          <div v-else class="bg-elevated rounded-lg divide-y divide-default">
+            <NuxtLink
+              v-for="signup in recentSignups"
+              :key="signup.id"
+              :to="`/signups/${signup.id}`"
+              class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
+            >
+              <img
+                v-if="signup.linkedinPhoto"
+                :src="signup.linkedinPhoto"
+                :alt="signup.name || signup.email"
+                class="size-9 rounded-full object-cover shrink-0"
+              />
+              <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+                {{ signup.name ? signup.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.email.charAt(0).toUpperCase() }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
+                <p v-if="signup.linkedinHeadline" class="text-xs text-muted truncate">{{ signup.linkedinHeadline }}</p>
+                <span
+                  class="inline-flex items-center px-1.5 py-0.5 rounded text-xs text-white mt-1"
+                  :style="{ backgroundColor: signup.sourceColor }"
+                >
+                  {{ signup.source }}
+                </span>
+              </div>
+              <div class="text-xs text-muted shrink-0">
+                {{ signup.time_ago }}
+              </div>
+            </NuxtLink>
+          </div>
         </div>
       </div>
     </template>

@@ -183,7 +183,7 @@ function getStatusColor(status: string) {
                   {{ campaign.stats.interested }}
                   <span class="text-xs text-muted">({{ campaign.stats.interested_percentage }}%)</span>
                 </td>
-                <td class="text-right py-3 px-4 text-red-600">
+                <td class="text-right py-3 px-4">
                   {{ campaign.stats.bounced }}
                   <span class="text-xs text-muted">({{ campaign.stats.bounced_percentage }}%)</span>
                 </td>

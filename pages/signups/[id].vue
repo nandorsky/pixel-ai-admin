@@ -94,6 +94,7 @@ interface Signup {
 
 const signup = ref<Signup | null>(null)
 const referrer = ref<{ email: string; first_name: string | null; last_name: string | null } | null>(null)
+const referrals = ref<{ id: number; email: string; first_name: string | null; last_name: string | null; created_at: string; linkedin_json: LinkedInJson | null }[]>([])
 const isLoading = ref(true)
 
 async function fetchSignup() {
@@ -120,6 +121,16 @@ async function fetchSignup() {
         .eq('referral_code', data.referred_by)
         .single()
       referrer.value = referrerData || null
+    }
+
+    // Fetch people this person has referred
+    if (data?.referral_code) {
+      const { data: referralsData } = await supabase
+        .from('signups')
+        .select('id, email, first_name, last_name, created_at, linkedin_json')
+        .eq('referred_by', data.referral_code)
+        .order('created_at', { ascending: false })
+      referrals.value = referralsData || []
     }
   }
   isLoading.value = false
@@ -470,6 +481,38 @@ const sourceColor = computed(() => {
                   <dd class="mt-1">{{ formatDate(signup.created_at) }}</dd>
                 </div>
               </dl>
+            </UCard>
+
+            <!-- People They Referred -->
+            <UCard v-if="referrals.length">
+              <template #header>
+                <h3 class="font-semibold">Referred {{ referrals.length }} {{ referrals.length === 1 ? 'Person' : 'People' }}</h3>
+              </template>
+
+              <div class="space-y-3">
+                <NuxtLink
+                  v-for="ref in referrals"
+                  :key="ref.id"
+                  :to="`/signups/${ref.id}`"
+                  class="flex items-center gap-3 p-2 -mx-2 rounded-lg hover:bg-accented/50 transition-colors"
+                >
+                  <img
+                    v-if="getLinkedInPhoto(ref.linkedin_json)"
+                    :src="getLinkedInPhoto(ref.linkedin_json)!"
+                    :alt="[ref.first_name, ref.last_name].filter(Boolean).join(' ') || ref.email"
+                    class="size-8 rounded-full object-cover shrink-0"
+                  />
+                  <div v-else class="size-8 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+                    {{ [ref.first_name, ref.last_name].filter(Boolean).map(n => n?.charAt(0)).join('').toUpperCase() || ref.email.charAt(0).toUpperCase() }}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium truncate">
+                      {{ [ref.first_name, ref.last_name].filter(Boolean).join(' ') || ref.email }}
+                    </p>
+                    <p class="text-xs text-muted truncate">{{ ref.email }}</p>
+                  </div>
+                </NuxtLink>
+              </div>
             </UCard>
           </div>
         </div>

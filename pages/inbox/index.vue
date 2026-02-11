@@ -14,6 +14,7 @@ interface Reply {
   automated_reply: boolean
   date_received: string
   campaign_id: number | null
+  parent_id: number | null
   attachments: { id: number; file_name: string; download_url: string }[]
 }
 
@@ -300,6 +301,18 @@ const statusOptions = [
   { label: 'Not Automated', value: 'not_automated_reply' }
 ]
 
+// Track which messages have been replied to (by checking sent messages' parent_ids)
+const repliedMessageIds = computed(() => {
+  const ids = new Set<number>()
+  replies.value.forEach(r => {
+    if (r.folder?.toLowerCase() === 'sent' && r.parent_id) {
+      ids.add(r.parent_id)
+    }
+  })
+  repliedToIds.value.forEach(id => ids.add(id))
+  return ids
+})
+
 const folderOptions = [
   { label: 'Inbox', value: 'inbox' },
   { label: 'Sent', value: 'sent' },
@@ -584,6 +597,14 @@ async function markAsNotInterested(reply: Reply) {
               />
               Archived
             </label>
+            <NuxtLink to="/inbox/mobile">
+              <UButton
+                icon="i-lucide-smartphone"
+                size="sm"
+                color="neutral"
+                variant="ghost"
+              />
+            </NuxtLink>
           </div>
         </template>
       </UDashboardNavbar>
@@ -675,6 +696,13 @@ async function markAsNotInterested(reply: Reply) {
                         class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                       >
                         {{ campaignMap[reply.campaign_id] || `C${reply.campaign_id}` }}
+                      </span>
+                      <span
+                        v-if="repliedMessageIds.has(reply.id)"
+                        class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+                      >
+                        <UIcon name="i-lucide-reply" class="w-3 h-3" />
+                        Replied
                       </span>
                       <span
                         v-if="archivedIds.has(reply.id)"

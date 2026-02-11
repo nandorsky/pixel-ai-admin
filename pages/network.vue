@@ -94,6 +94,19 @@ async function fetchAndRenderNetwork() {
     maxDepth
   }
 
+  // Filter to only show people who have referred others and the people they referred
+  const referrerIds = new Set(referralCounts.keys())
+  const filteredSignups = signups.filter(s => {
+    // Include if this person has made referrals
+    if (referrerIds.has(s.id)) return true
+    // Include if this person was referred by someone who has made referrals
+    if (s.referred_by) {
+      const referrer = codeToSignup.get(s.referred_by)
+      if (referrer && referrerIds.has(referrer.id)) return true
+    }
+    return false
+  })
+
   // Color scale based on depth (center = darker/primary, outer = lighter)
   const colors = [
     { bg: '#059669', border: '#047857' }, // emerald-600 - roots
@@ -105,7 +118,7 @@ async function fetchAndRenderNetwork() {
 
   // Create nodes
   const nodes = new DataSet(
-    signups.map(s => {
+    filteredSignups.map(s => {
       const name = `${s.first_name || ''} ${s.last_name || ''}`.trim()
       const label = name || s.email.split('@')[0]
       const depth = depths.get(s.id) || 0
@@ -144,7 +157,7 @@ async function fetchAndRenderNetwork() {
 
   // Create edges (from referrer TO referred - showing growth direction)
   const edges = new DataSet(
-    signups
+    filteredSignups
       .filter(s => s.referred_by)
       .map(s => {
         const referrer = codeToSignup.get(s.referred_by!)

@@ -18,8 +18,8 @@ const links = [[{
     open.value = false
   }
 }, {
-  label: 'Signups',
-  icon: 'i-lucide-users',
+  label: 'Waitlist',
+  icon: 'i-lucide-list-check',
   to: '/signups',
   onSelect: () => {
     open.value = false
@@ -42,6 +42,13 @@ const links = [[{
   label: 'Campaigns',
   icon: 'i-lucide-megaphone',
   to: '/campaigns',
+  onSelect: () => {
+    open.value = false
+  }
+}, {
+  label: 'Email Accounts',
+  icon: 'i-lucide-at-sign',
+  to: '/email-accounts',
   onSelect: () => {
     open.value = false
   }

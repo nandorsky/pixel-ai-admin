@@ -90,6 +90,33 @@ function copyToClipboard(text: string, label: string) {
   })
 }
 
+const updatingAccess = ref<Set<string>>(new Set())
+
+async function toggleAccess(signup: Signup) {
+  updatingAccess.value.add(signup.id)
+  const newValue = !signup.product_access
+
+  const { error } = await supabase
+    .from('signups')
+    .update({ product_access: newValue })
+    .eq('id', signup.id)
+
+  if (error) {
+    toast.add({
+      title: 'Error updating access',
+      description: error.message,
+      color: 'error'
+    })
+  } else {
+    signup.product_access = newValue
+    toast.add({
+      title: newValue ? 'Access granted' : 'Access revoked',
+      color: 'success'
+    })
+  }
+  updatingAccess.value.delete(signup.id)
+}
+
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -161,9 +188,9 @@ const pagination = ref({
 </script>
 
 <template>
-  <UDashboardPanel id="signups">
+  <UDashboardPanel id="waitlist">
     <template #header>
-      <UDashboardNavbar title="Signups">
+      <UDashboardNavbar title="Waitlist">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
@@ -268,16 +295,28 @@ const pagination = ref({
         </template>
 
         <template #product_access-cell="{ row }">
-          <UIcon
-            v-if="row.original.product_access"
-            name="i-lucide-check"
-            class="w-5 h-5 text-green-600"
-          />
-          <UIcon
-            v-else
-            name="i-lucide-x"
-            class="w-5 h-5 text-red-500"
-          />
+          <button
+            class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+            :disabled="updatingAccess.has(row.original.id)"
+            :title="row.original.product_access ? 'Click to revoke access' : 'Click to grant access'"
+            @click="toggleAccess(row.original)"
+          >
+            <UIcon
+              v-if="updatingAccess.has(row.original.id)"
+              name="i-lucide-loader-2"
+              class="w-5 h-5 text-gray-400 animate-spin"
+            />
+            <UIcon
+              v-else-if="row.original.product_access"
+              name="i-lucide-lock-open"
+              class="w-5 h-5 text-green-600"
+            />
+            <UIcon
+              v-else
+              name="i-lucide-lock"
+              class="w-5 h-5 text-gray-400"
+            />
+          </button>
         </template>
 
         <template #referral_code-cell="{ row }">
