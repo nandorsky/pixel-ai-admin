@@ -10,6 +10,18 @@ const isLoading = ref(true)
 const stats = ref({ total: 0, withReferrals: 0, maxDepth: 0 })
 let network: Network | null = null
 
+interface LinkedInProfilePicture {
+  url: string
+  width: number
+  height: number
+}
+
+interface LinkedInJson {
+  profilePicture?: string
+  profilePictures?: LinkedInProfilePicture[]
+  [key: string]: any
+}
+
 interface Signup {
   id: number
   email: string
@@ -17,6 +29,47 @@ interface Signup {
   last_name: string | null
   referral_code: string
   referred_by: string | null
+  linkedin_json: LinkedInJson | null
+}
+
+function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
+  if (!linkedin) return null
+  if (linkedin.profilePicture) return linkedin.profilePicture
+  if (linkedin.profilePictures?.length) {
+    const preferred = linkedin.profilePictures.find(p => p.width === 200) || linkedin.profilePictures[0]
+    return preferred?.url || null
+  }
+  return null
+}
+
+function generateInitialsImage(signup: Signup): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = 100
+  canvas.height = 100
+  const ctx = canvas.getContext('2d')!
+
+  // Background
+  const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6']
+  const charCode = (signup.email || '').charCodeAt(0) || 0
+  ctx.fillStyle = colors[charCode % colors.length]
+  ctx.beginPath()
+  ctx.arc(50, 50, 50, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Initials
+  const initials = [signup.first_name, signup.last_name]
+    .filter(Boolean)
+    .map(n => n!.charAt(0))
+    .join('')
+    .toUpperCase() || signup.email.charAt(0).toUpperCase()
+
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 40px Inter, system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(initials, 50, 52)
+
+  return canvas.toDataURL()
 }
 
 async function fetchAndRenderNetwork() {
@@ -24,7 +77,7 @@ async function fetchAndRenderNetwork() {
 
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, email, first_name, last_name, referral_code, referred_by')
+    .select('id, email, first_name, last_name, referral_code, referred_by, linkedin_json')
 
   if (error) {
     toast.add({
@@ -94,27 +147,16 @@ async function fetchAndRenderNetwork() {
     maxDepth
   }
 
-  // Filter to only show people who have referred others and the people they referred
+  // Show referrers and the people they referred
   const referrerIds = new Set(referralCounts.keys())
   const filteredSignups = signups.filter(s => {
-    // Include if this person has made referrals
     if (referrerIds.has(s.id)) return true
-    // Include if this person was referred by someone who has made referrals
     if (s.referred_by) {
       const referrer = codeToSignup.get(s.referred_by)
       if (referrer && referrerIds.has(referrer.id)) return true
     }
     return false
   })
-
-  // Color scale based on depth (center = darker/primary, outer = lighter)
-  const colors = [
-    { bg: '#059669', border: '#047857' }, // emerald-600 - roots
-    { bg: '#10b981', border: '#059669' }, // emerald-500
-    { bg: '#34d399', border: '#10b981' }, // emerald-400
-    { bg: '#6ee7b7', border: '#34d399' }, // emerald-300
-    { bg: '#a7f3d0', border: '#6ee7b7' }, // emerald-200
-  ]
 
   // Create nodes
   const nodes = new DataSet(
@@ -123,45 +165,44 @@ async function fetchAndRenderNetwork() {
       const label = name || s.email.split('@')[0]
       const depth = depths.get(s.id) || 0
       const referralCount = referralCounts.get(s.id) || 0
-      const colorIndex = Math.min(depth, colors.length - 1)
-      const color = colors[colorIndex]
+      const photo = getLinkedInPhoto(s.linkedin_json)
+      const image = photo || generateInitialsImage(s)
 
-      // Size based on referral count
-      const baseSize = 20
+      const baseSize = 25
       const size = baseSize + (referralCount * 5)
 
       return {
         id: s.id,
         label,
-        title: `${label}\n${s.email}\nReferred: ${referralCount} people\nGeneration: ${depth}`,
-        level: depth,
+        title: `${label}\n${s.email}\nReferred: ${referralCount} people`,
+        mass: 1 + referralCount * 2,
         size: Math.min(size, 50),
+        shape: 'circularImage',
+        image,
+        borderWidth: 2,
         color: {
-          background: color.bg,
-          border: color.border,
-          highlight: {
-            background: color.bg,
-            border: '#ffffff'
-          }
+          border: '#6b7280',
+          highlight: { border: '#3b82f6' }
         },
         font: {
-          color: depth < 2 ? '#ffffff' : '#1f2937',
+          color: '#e5e7eb',
           size: 12,
           face: 'Inter, system-ui, sans-serif',
           strokeWidth: 2,
-          strokeColor: depth < 2 ? '#000000' : '#ffffff'
+          strokeColor: '#000000'
         }
       }
     })
   )
 
-  // Create edges (from referrer TO referred - showing growth direction)
+  // Create edges
+  const filteredIds = new Set(filteredSignups.map(s => s.id))
   const edges = new DataSet(
     filteredSignups
       .filter(s => s.referred_by)
       .map(s => {
         const referrer = codeToSignup.get(s.referred_by!)
-        if (!referrer) return null
+        if (!referrer || !filteredIds.has(referrer.id)) return null
         return {
           from: referrer.id,
           to: s.id,
@@ -175,38 +216,57 @@ async function fetchAndRenderNetwork() {
       .filter(Boolean) as any[]
   )
 
-  // Network options - hierarchical radial layout
+  // Network options - force-directed layout
   const options = {
     nodes: {
-      shape: 'dot',
-      borderWidth: 3,
+      shape: 'circularImage',
+      borderWidth: 2,
       shadow: {
         enabled: true,
         size: 5,
         x: 2,
         y: 2
+      },
+      shapeProperties: {
+        useImageSize: false
       }
     },
     edges: {
-      smooth: false
+      smooth: {
+        enabled: true,
+        type: 'continuous',
+        roundness: 0.5
+      },
+      color: {
+        color: '#6b7280',
+        highlight: '#3b82f6'
+      },
+      width: 1.5
     },
     layout: {
-      hierarchical: {
-        enabled: true,
-        direction: 'UD',
-        sortMethod: 'directed',
-        levelSeparation: 120,
-        nodeSpacing: 180,
-        treeSpacing: 200,
-        shakeTowards: 'roots'
-      }
+      improvedLayout: true,
+      randomSeed: 42
     },
     physics: {
-      enabled: false
+      enabled: true,
+      forceAtlas2Based: {
+        gravitationalConstant: -80,
+        centralGravity: 0.01,
+        springLength: 150,
+        springConstant: 0.02,
+        damping: 0.4,
+        avoidOverlap: 0.8
+      },
+      solver: 'forceAtlas2Based',
+      stabilization: {
+        enabled: true,
+        iterations: 200,
+        updateInterval: 25
+      }
     },
     interaction: {
       hover: true,
-      tooltipDelay: 100,
+      tooltipDelay: 0,
       zoomView: true,
       dragView: true,
       dragNodes: true
@@ -221,9 +281,10 @@ async function fetchAndRenderNetwork() {
   // Create network
   network = new Network(networkContainer.value, { nodes, edges }, options)
 
-  // Fit to view after stabilization
-  network.once('stabilized', () => {
+  // Fit to view and freeze after stabilization
+  network.once('stabilizationIterationsDone', () => {
     network?.fit({ animation: true })
+    network?.setOptions({ physics: { enabled: false } })
   })
 
   isLoading.value = false
@@ -253,19 +314,7 @@ onUnmounted(() => {
     <template #body>
       <div class="flex flex-col h-full">
         <!-- Legend and stats -->
-        <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
-          <div class="flex items-center gap-6">
-            <div class="flex items-center gap-2">
-              <div class="size-4 rounded-full bg-emerald-600 border-2 border-emerald-700" />
-              <span class="text-sm text-muted">Original signups</span>
-            </div>
-            <div class="flex items-center gap-1">
-              <div class="size-3 rounded-full bg-emerald-500" />
-              <div class="size-3 rounded-full bg-emerald-400" />
-              <div class="size-3 rounded-full bg-emerald-300" />
-              <span class="text-sm text-muted ml-1">Generations (darker = earlier)</span>
-            </div>
-          </div>
+        <div class="flex flex-wrap items-center justify-end gap-4 mb-4">
           <div class="flex items-center gap-4 text-sm text-muted">
             <span><strong class="text-highlighted">{{ stats.total }}</strong> total signups</span>
             <span><strong class="text-highlighted">{{ stats.withReferrals }}</strong> made referrals</span>

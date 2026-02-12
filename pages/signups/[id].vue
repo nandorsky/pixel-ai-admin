@@ -93,7 +93,7 @@ interface Signup {
 }
 
 const signup = ref<Signup | null>(null)
-const referrer = ref<{ email: string; first_name: string | null; last_name: string | null } | null>(null)
+const referrer = ref<{ id: number; email: string; first_name: string | null; last_name: string | null; linkedin_json: LinkedInJson | null } | null>(null)
 const referrals = ref<{ id: number; email: string; first_name: string | null; last_name: string | null; created_at: string; linkedin_json: LinkedInJson | null }[]>([])
 const isLoading = ref(true)
 
@@ -117,7 +117,7 @@ async function fetchSignup() {
     if (data?.referred_by) {
       const { data: referrerData } = await supabase
         .from('signups')
-        .select('email, first_name, last_name')
+        .select('id, email, first_name, last_name, linkedin_json')
         .eq('referral_code', data.referred_by)
         .single()
       referrer.value = referrerData || null
@@ -166,11 +166,7 @@ const fullName = computed(() => {
 
 const referrerDisplay = computed(() => {
   if (!referrer.value) return null
-  const name = `${referrer.value.first_name || ''} ${referrer.value.last_name || ''}`.trim()
-  if (name) {
-    return `${name} (${referrer.value.email})`
-  }
-  return referrer.value.email
+  return `${referrer.value.first_name || ''} ${referrer.value.last_name || ''}`.trim() || referrer.value.email
 })
 
 const currentPosition = computed(() => {
@@ -457,7 +453,25 @@ const sourceColor = computed(() => {
                 </div>
                 <div>
                   <dt class="text-sm text-muted">Referred By</dt>
-                  <dd class="mt-1">{{ referrerDisplay || (signup.referred_by ? 'Unknown' : '—') }}</dd>
+                  <dd class="mt-1">
+                    <NuxtLink
+                      v-if="referrer"
+                      :to="`/signups/${referrer.id}`"
+                      class="flex items-center gap-2 hover:opacity-80"
+                    >
+                      <img
+                        v-if="getLinkedInPhoto(referrer.linkedin_json)"
+                        :src="getLinkedInPhoto(referrer.linkedin_json)!"
+                        :alt="referrerDisplay || ''"
+                        class="w-6 h-6 rounded-full object-cover shrink-0"
+                      />
+                      <div v-else class="w-6 h-6 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+                        {{ [referrer.first_name, referrer.last_name].filter(Boolean).map(n => n?.charAt(0)).join('').toUpperCase() || referrer.email.charAt(0).toUpperCase() }}
+                      </div>
+                      <span class="text-primary hover:underline">{{ referrerDisplay }}</span>
+                    </NuxtLink>
+                    <span v-else>{{ signup.referred_by ? 'Unknown' : '—' }}</span>
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-sm text-muted">Source</dt>

@@ -42,6 +42,7 @@ interface Signup {
   utm_parameters: Record<string, string> | null
   linkedin_json: LinkedInJson | null
   product_access: boolean | null
+  invite_sent_at: string | null
 }
 
 const toast = useToast()
@@ -63,7 +64,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json, product_access')
+    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json, product_access, invite_sent_at')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -117,6 +118,60 @@ async function toggleAccess(signup: Signup) {
   updatingAccess.value.delete(signup.id)
 }
 
+const sendingInvites = ref(false)
+
+const selectedRows = computed(() => {
+  const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
+  return indices.map(i => data.value[Number(i)]).filter(Boolean)
+})
+
+async function sendInviteEmails() {
+  const selected = selectedRows.value
+  if (selected.length === 0) return
+
+  sendingInvites.value = true
+  try {
+    const { results } = await $fetch('/api/signups/send-invite', {
+      method: 'POST',
+      body: { ids: selected.map(s => s.id) }
+    }) as { results: { id: number; status: string; error?: string }[] }
+
+    const sentCount = results.filter(r => r.status === 'sent').length
+    const alreadySentCount = results.filter(r => r.status === 'already_sent').length
+    const errorCount = results.filter(r => r.status === 'error').length
+
+    // Update local state with invite_sent_at for sent items
+    const now = new Date().toISOString()
+    for (const result of results) {
+      if (result.status === 'sent') {
+        const signup = data.value.find(s => Number(s.id) === result.id)
+        if (signup) signup.invite_sent_at = now
+      }
+    }
+
+    const parts: string[] = []
+    if (sentCount > 0) parts.push(`${sentCount} sent`)
+    if (alreadySentCount > 0) parts.push(`${alreadySentCount} already invited`)
+    if (errorCount > 0) parts.push(`${errorCount} failed`)
+
+    toast.add({
+      title: 'Invite emails processed',
+      description: parts.join(', '),
+      color: errorCount > 0 ? 'warning' : 'success'
+    })
+
+    rowSelection.value = {}
+  } catch (err: any) {
+    toast.add({
+      title: 'Error sending invites',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+  } finally {
+    sendingInvites.value = false
+  }
+}
+
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -146,6 +201,10 @@ const columns: TableColumn<Signup>[] = [
   {
     accessorKey: 'product_access',
     header: 'Access'
+  },
+  {
+    accessorKey: 'invite_sent_at',
+    header: 'Invited'
   },
   {
     id: 'source',
@@ -207,6 +266,14 @@ const pagination = ref({
         />
 
         <div class="flex flex-wrap items-center gap-1.5">
+          <UButton
+            v-if="selectedRows.length > 0"
+            :label="`Send Invite Email (${selectedRows.length})`"
+            icon="i-lucide-mail"
+            color="primary"
+            :loading="sendingInvites"
+            @click="sendInviteEmails"
+          />
           <UDropdownMenu
             :items="
               table?.tableApi
@@ -319,6 +386,13 @@ const pagination = ref({
           </button>
         </template>
 
+        <template #invite_sent_at-cell="{ row }">
+          <span v-if="row.original.invite_sent_at" class="text-xs text-green-600 dark:text-green-400">
+            {{ formatDate(row.original.invite_sent_at) }}
+          </span>
+          <span v-else class="text-muted text-xs">—</span>
+        </template>
+
         <template #referral_code-cell="{ row }">
           <div class="flex items-center gap-2">
             <span class="font-mono text-xs">{{ row.original.referral_code }}</span>
@@ -371,6 +445,15 @@ const pagination = ref({
             <UIcon name="i-lucide-external-link" class="w-3 h-3" />
           </a>
           <span v-else class="text-muted text-xs">—</span>
+        </template>
+
+        <template #empty>
+          <div v-if="isFetching" class="flex items-center justify-center py-8">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div v-else class="text-center py-8 text-muted text-sm">
+            No signups found
+          </div>
         </template>
       </UTable>
 

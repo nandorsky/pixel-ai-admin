@@ -200,7 +200,6 @@ async function sendReply() {
       method: 'POST',
       body: {
         message: htmlMessage,
-        reply_template_id: selectedTemplateId.value,
         inject_previous_email_body: true,
         content_type: 'html'
       }
