@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { h } from 'vue'
 import { upperFirst } from 'scule'
 import type { TableColumn } from '@nuxt/ui'
-import { getPaginationRowModel } from '@tanstack/table-core'
+import { getPaginationRowModel, getFilteredRowModel } from '@tanstack/table-core'
 import { getSignupSource, getSourceColor } from '~/utils/signup-source'
+
+const UCheckbox = resolveComponent('UCheckbox')
 
 const supabase = useSupabase()
 
@@ -58,7 +61,26 @@ const columnVisibility = ref({
 const rowSelection = ref({})
 
 const data = ref<Signup[]>([])
+const referralCounts = ref<Record<string, number>>({})
 const isFetching = ref(true)
+const sourceFilter = ref('__all__')
+
+const uniqueSources = computed(() => {
+  const sources = new Set<string>()
+  for (const s of data.value) {
+    sources.add(getSignupSource(s))
+  }
+  return Array.from(sources).sort()
+})
+
+function getEarnedCredits(signup: Signup): number {
+  const referrals = referralCounts.value[signup.referral_code] || 0
+  return 500 + (referrals * 500)
+}
+
+function getTotalCredits(signup: Signup): number {
+  return Math.max(1750, getEarnedCredits(signup))
+}
 
 async function fetchSignups() {
   isFetching.value = true
@@ -75,6 +97,14 @@ async function fetchSignups() {
     })
   } else {
     data.value = signups || []
+    // Build referral count map
+    const counts: Record<string, number> = {}
+    for (const s of data.value) {
+      if (s.referred_by) {
+        counts[s.referred_by] = (counts[s.referred_by] || 0) + 1
+      }
+    }
+    referralCounts.value = counts
   }
   isFetching.value = false
 }
@@ -118,14 +148,92 @@ async function toggleAccess(signup: Signup) {
   updatingAccess.value.delete(signup.id)
 }
 
+const grantingAccess = ref(false)
+
+async function grantAccessBulk() {
+  const selected = selectedRows.value
+  if (selected.length === 0) return
+
+  grantingAccess.value = true
+  let successCount = 0
+  let errorCount = 0
+
+  for (const signup of selected) {
+    if (signup.product_access) {
+      successCount++
+      continue
+    }
+
+    const { error } = await supabase
+      .from('signups')
+      .update({ product_access: true })
+      .eq('id', signup.id)
+
+    if (error) {
+      errorCount++
+    } else {
+      signup.product_access = true
+      successCount++
+    }
+  }
+
+  if (errorCount > 0) {
+    toast.add({
+      title: 'Access update completed',
+      description: `${successCount} granted, ${errorCount} failed`,
+      color: 'warning'
+    })
+  } else {
+    toast.add({
+      title: 'Access granted',
+      description: `${successCount} user${successCount > 1 ? 's' : ''} now have access`,
+      color: 'success'
+    })
+  }
+
+  rowSelection.value = {}
+  grantingAccess.value = false
+}
+
 const sendingInvites = ref(false)
+const showInviteModal = ref(false)
+const inviteSubject = ref('')
+const previewHtml = ref('')
+const loadingPreview = ref(false)
 
 const selectedRows = computed(() => {
   const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
   return indices.map(i => data.value[Number(i)]).filter(Boolean)
 })
 
-async function sendInviteEmails() {
+async function openInviteModal() {
+  const first = selectedRows.value[0]
+  if (!first) return
+
+  showInviteModal.value = true
+  loadingPreview.value = true
+
+  try {
+    const { subject, html } = await $fetch('/api/signups/preview-invite', {
+      method: 'POST',
+      body: { id: first.id }
+    }) as { subject: string; html: string }
+
+    inviteSubject.value = subject
+    previewHtml.value = html
+  } catch (err: any) {
+    toast.add({
+      title: 'Error loading preview',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+    showInviteModal.value = false
+  } finally {
+    loadingPreview.value = false
+  }
+}
+
+async function confirmSendInvites() {
   const selected = selectedRows.value
   if (selected.length === 0) return
 
@@ -133,7 +241,9 @@ async function sendInviteEmails() {
   try {
     const { results } = await $fetch('/api/signups/send-invite', {
       method: 'POST',
-      body: { ids: selected.map(s => s.id) }
+      body: {
+        ids: selected.map(s => s.id)
+      }
     }) as { results: { id: number; status: string; error?: string }[] }
 
     const sentCount = results.filter(r => r.status === 'sent').length
@@ -154,12 +264,18 @@ async function sendInviteEmails() {
     if (alreadySentCount > 0) parts.push(`${alreadySentCount} already invited`)
     if (errorCount > 0) parts.push(`${errorCount} failed`)
 
+    const errors = results.filter(r => r.status === 'error' && r.error).map(r => r.error)
+    const description = errors.length > 0
+      ? `${parts.join(', ')} — ${errors.join('; ')}`
+      : parts.join(', ')
+
     toast.add({
       title: 'Invite emails processed',
-      description: parts.join(', '),
+      description,
       color: errorCount > 0 ? 'warning' : 'success'
     })
 
+    showInviteModal.value = false
     rowSelection.value = {}
   } catch (err: any) {
     toast.add({
@@ -189,6 +305,19 @@ function truncateId(id: string | number) {
 
 const columns: TableColumn<Signup>[] = [
   {
+    id: 'select',
+    header: ({ table }) => h(UCheckbox, {
+      'modelValue': table.getIsSomePageRowsSelected() ? 'indeterminate' : table.getIsAllPageRowsSelected(),
+      'onUpdate:modelValue': (value: boolean | 'indeterminate') => table.toggleAllPageRowsSelected(!!value),
+      'ariaLabel': 'Select all'
+    }),
+    cell: ({ row }) => h(UCheckbox, {
+      'modelValue': row.getIsSelected(),
+      'onUpdate:modelValue': (value: boolean | 'indeterminate') => row.toggleSelected(!!value),
+      'ariaLabel': 'Select row'
+    })
+  },
+  {
     accessorKey: 'id',
     header: 'ID'
   },
@@ -200,35 +329,21 @@ const columns: TableColumn<Signup>[] = [
   },
   {
     accessorKey: 'product_access',
-    header: 'Access'
-  },
-  {
-    accessorKey: 'invite_sent_at',
-    header: 'Invited'
+    header: 'Status'
   },
   {
     id: 'source',
     header: 'Source',
-    accessorFn: (row) => getSignupSource(row)
+    accessorFn: (row) => getSignupSource(row),
+    filterFn: (row, columnId, filterValue) => {
+      if (!filterValue) return true
+      return row.getValue(columnId) === filterValue
+    }
   },
   {
     accessorKey: 'created_at',
     header: 'Signed Up'
   },
-  {
-    accessorKey: 'referral_code',
-    header: 'Referral Code'
-  },
-  {
-    id: 'referral_link',
-    header: 'Referral Link',
-    accessorFn: (row) => `https://getpixel.ai?ref=${row.referral_code}`
-  },
-  {
-    id: 'linkedin',
-    header: 'LinkedIn',
-    accessorFn: (row) => row.linkedin_json?.username ? `https://linkedin.com/in/${row.linkedin_json.username}` : null
-  }
 ]
 
 const searchFilter = computed({
@@ -238,6 +353,11 @@ const searchFilter = computed({
   set: (value: string) => {
     table.value?.tableApi?.getColumn('name')?.setFilterValue(value || undefined)
   }
+})
+
+watch(sourceFilter, (val) => {
+  table.value?.tableApi?.getColumn('source')?.setFilterValue(val === '__all__' ? undefined : val)
+  pagination.value.pageIndex = 0
 })
 
 const pagination = ref({
@@ -258,21 +378,36 @@ const pagination = ref({
 
     <template #body>
       <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <UInput
-          v-model="searchFilter"
-          class="max-w-sm"
-          icon="i-lucide-search"
-          placeholder="Search..."
-        />
+        <div class="flex items-center gap-1.5">
+          <UInput
+            v-model="searchFilter"
+            class="max-w-sm"
+            icon="i-lucide-search"
+            placeholder="Search..."
+          />
+          <USelect
+            v-model="sourceFilter"
+            :items="[{ label: 'All Sources', value: '__all__' }, ...uniqueSources.map(s => ({ label: s, value: s }))]"
+            value-key="value"
+            class="w-44"
+          />
+        </div>
 
         <div class="flex flex-wrap items-center gap-1.5">
+          <UButton
+            v-if="selectedRows.length > 0"
+            :label="`Grant Access (${selectedRows.length})`"
+            icon="i-lucide-lock-open"
+            color="success"
+            :loading="grantingAccess"
+            @click="grantAccessBulk"
+          />
           <UButton
             v-if="selectedRows.length > 0"
             :label="`Send Invite Email (${selectedRows.length})`"
             icon="i-lucide-mail"
             color="primary"
-            :loading="sendingInvites"
-            @click="sendInviteEmails"
+            @click="openInviteModal"
           />
           <UDropdownMenu
             :items="
@@ -344,8 +479,10 @@ const pagination = ref({
               {{ [row.original.first_name, row.original.last_name].filter(Boolean).map(n => n.charAt(0)).join('').toUpperCase() || row.original.email.charAt(0).toUpperCase() }}
             </div>
             <div class="min-w-0">
-              <div class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate">
-                {{ row.original.first_name || '' }} {{ row.original.last_name || '' }}
+              <div class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate flex items-center gap-2">
+                <span>{{ row.original.first_name || '' }} {{ row.original.last_name || '' }}</span>
+                <span class="text-xs font-normal text-amber-600 dark:text-amber-400">{{ getTotalCredits(row.original).toLocaleString() }} credits</span>
+                <span class="text-xs font-normal text-green-600 dark:text-green-400">({{ getEarnedCredits(row.original).toLocaleString() }} earned)</span>
               </div>
               <div class="text-xs text-muted truncate">
                 {{ row.original.email }}
@@ -362,46 +499,40 @@ const pagination = ref({
         </template>
 
         <template #product_access-cell="{ row }">
-          <button
-            class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-            :disabled="updatingAccess.has(row.original.id)"
-            :title="row.original.product_access ? 'Click to revoke access' : 'Click to grant access'"
-            @click="toggleAccess(row.original)"
-          >
+          <div class="flex items-center gap-1">
+            <button
+              class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+              :disabled="updatingAccess.has(row.original.id)"
+              :title="row.original.product_access ? 'Click to revoke access' : 'Click to grant access'"
+              @click="toggleAccess(row.original)"
+            >
+              <UIcon
+                v-if="updatingAccess.has(row.original.id)"
+                name="i-lucide-loader-2"
+                class="w-5 h-5 text-gray-400 animate-spin"
+              />
+              <UIcon
+                v-else-if="row.original.product_access"
+                name="i-lucide-lock-open"
+                class="w-5 h-5 text-green-600"
+              />
+              <UIcon
+                v-else
+                name="i-lucide-lock"
+                class="w-5 h-5 text-gray-400"
+              />
+            </button>
             <UIcon
-              v-if="updatingAccess.has(row.original.id)"
-              name="i-lucide-loader-2"
-              class="w-5 h-5 text-gray-400 animate-spin"
-            />
-            <UIcon
-              v-else-if="row.original.product_access"
-              name="i-lucide-lock-open"
+              v-if="row.original.invite_sent_at"
+              name="i-lucide-mail-check"
               class="w-5 h-5 text-green-600"
+              :title="`Invited ${formatDate(row.original.invite_sent_at)}`"
             />
             <UIcon
               v-else
-              name="i-lucide-lock"
+              name="i-lucide-mail-x"
               class="w-5 h-5 text-gray-400"
-            />
-          </button>
-        </template>
-
-        <template #invite_sent_at-cell="{ row }">
-          <span v-if="row.original.invite_sent_at" class="text-xs text-green-600 dark:text-green-400">
-            {{ formatDate(row.original.invite_sent_at) }}
-          </span>
-          <span v-else class="text-muted text-xs">—</span>
-        </template>
-
-        <template #referral_code-cell="{ row }">
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-xs">{{ row.original.referral_code }}</span>
-            <UButton
-              icon="i-lucide-copy"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              @click="copyToClipboard(row.original.referral_code, 'Referral code')"
+              title="Not invited"
             />
           </div>
         </template>
@@ -417,34 +548,6 @@ const pagination = ref({
 
         <template #created_at-cell="{ row }">
           {{ formatDate(row.original.created_at) }}
-        </template>
-
-        <template #referral_link-cell="{ row }">
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-xs truncate max-w-[200px]">https://getpixel.ai?ref={{ row.original.referral_code }}</span>
-            <UButton
-              icon="i-lucide-copy"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              @click="copyToClipboard(`https://getpixel.ai?ref=${row.original.referral_code}`, 'Referral link')"
-            />
-          </div>
-        </template>
-
-        <template #linkedin-cell="{ row }">
-          <a
-            v-if="row.original.linkedin_json?.username"
-            :href="`https://linkedin.com/in/${row.original.linkedin_json.username}`"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-blue-600 dark:text-blue-400 hover:underline text-xs flex items-center gap-1"
-            @click.stop
-          >
-            View
-            <UIcon name="i-lucide-external-link" class="w-3 h-3" />
-          </a>
-          <span v-else class="text-muted text-xs">—</span>
         </template>
 
         <template #empty>
@@ -472,5 +575,68 @@ const pagination = ref({
         </div>
       </div>
     </template>
+
   </UDashboardPanel>
+
+  <UModal v-model:open="showInviteModal" title="Preview Invite Email" :ui="{ width: 'max-w-2xl' }">
+    <template #body>
+      <div class="space-y-4">
+        <!-- Recipients -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">To ({{ selectedRows.length }})</label>
+          <div class="flex flex-wrap gap-1.5">
+            <span
+              v-for="s in selectedRows.slice(0, 10)"
+              :key="s.id"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800 text-muted"
+            >
+              {{ s.first_name || s.email.split('@')[0] }} {{ s.last_name || '' }}
+            </span>
+            <span v-if="selectedRows.length > 10" class="text-xs text-muted self-center">
+              +{{ selectedRows.length - 10 }} more
+            </span>
+          </div>
+        </div>
+
+        <!-- Subject -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
+          <div class="text-sm">{{ inviteSubject }}</div>
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Preview</label>
+          <div v-if="loadingPreview" class="flex items-center justify-center py-12 rounded-lg border border-default bg-white">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div
+            v-else
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96"
+            v-html="previewHtml"
+          />
+          <p v-if="selectedRows.length > 1" class="text-xs text-muted mt-1">
+            Showing preview for {{ selectedRows[0]?.first_name || selectedRows[0]?.email }}. Credits and referrals are personalized per recipient.
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="subtle"
+            @click="showInviteModal = false"
+          />
+          <UButton
+            :label="`Send to ${selectedRows.length} recipient${selectedRows.length > 1 ? 's' : ''}`"
+            icon="i-lucide-send"
+            color="primary"
+            :loading="sendingInvites"
+            @click="confirmSendInvites"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
 </template>

@@ -19,12 +19,14 @@ export default defineEventHandler(async (event) => {
     config.public.supabaseKey as string
   )
 
+  const template = buildInviteTemplate()
+  const subject = `You're in — and you're starting with {{credits}} credits`
   const results: { id: number; status: string; error?: string }[] = []
 
   for (const id of ids) {
     const { data: signup, error: fetchError } = await supabase
       .from('signups')
-      .select('id, email, first_name, invite_sent_at')
+      .select('id, email, first_name, invite_sent_at, referral_code')
       .eq('id', id)
       .single()
 
@@ -40,29 +42,33 @@ export default defineEventHandler(async (event) => {
 
     const firstName = signup.first_name || ''
 
+    const { count: referralCount } = await supabase
+      .from('signups')
+      .select('id', { count: 'exact', head: true })
+      .eq('referred_by', signup.referral_code)
+
+    const referrals = referralCount || 0
+    const earned = 500 + (referrals * 500)
+    const credits = Math.max(1750, earned)
+
+    const html = replaceInvitePlaceholders(template, {
+      firstName,
+      credits,
+      referralCount: referrals
+    })
+
     try {
-      await resend.emails.send({
-        from: 'Pixel <notifications@getpixel.ai>',
+      const { data: emailResult, error: emailError } = await resend.emails.send({
+        from: 'Pixel <notifications@notifications.getpixel.ai>',
         to: signup.email,
-        subject: "You're in! Your Pixel invite is ready",
-        html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 40px 20px;">
-            <h1 style="font-size: 24px; font-weight: 600; margin-bottom: 16px;">
-              ${firstName ? `Hey ${firstName}, you're` : "You're"} in! 🎉
-            </h1>
-            <p style="font-size: 16px; line-height: 1.6; color: #333;">
-              Great news — your access to Pixel is ready. Click below to get started.
-            </p>
-            <a href="https://getpixel.ai/login" style="display: inline-block; margin: 24px 0; padding: 12px 28px; background-color: #16a34a; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
-              Get Started
-            </a>
-            <p style="font-size: 14px; color: #666; margin-top: 32px;">
-              If you have any questions, just reply to this email.
-            </p>
-            <p style="font-size: 14px; color: #666;">— The Pixel Team</p>
-          </div>
-        `
+        subject: subject.replace('{{credits}}', credits.toLocaleString()),
+        html
       })
+
+      if (emailError) {
+        results.push({ id, status: 'error', error: emailError.message })
+        continue
+      }
 
       const { error: updateError } = await supabase
         .from('signups')

@@ -558,14 +558,14 @@ async function markAsNotInterested(reply: Reply) {
           <UDashboardSidebarCollapse />
         </template>
         <template #right>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <UInput
               :model-value="searchQuery"
               @update:model-value="onSearch"
               icon="i-lucide-search"
               placeholder="Search..."
               size="sm"
-              class="w-48"
+              class="w-36 sm:w-48"
             />
             <USelectMenu
               v-model="campaignFilter"
@@ -596,14 +596,6 @@ async function markAsNotInterested(reply: Reply) {
               />
               Archived
             </label>
-            <NuxtLink to="/inbox/mobile">
-              <UButton
-                icon="i-lucide-smartphone"
-                size="sm"
-                color="neutral"
-                variant="ghost"
-              />
-            </NuxtLink>
           </div>
         </template>
       </UDashboardNavbar>
@@ -612,7 +604,10 @@ async function markAsNotInterested(reply: Reply) {
     <template #body>
       <div class="flex h-full gap-0 -m-4">
         <!-- Left: Email List -->
-        <div class="w-80 shrink-0 border-r border-default flex flex-col">
+        <div
+          class="w-full md:w-80 shrink-0 md:border-r border-default flex flex-col"
+          :class="{ 'hidden md:flex': selectedId }"
+        >
 
           <!-- Bulk Actions -->
           <div v-if="isSelectionMode" class="p-2 border-b border-default bg-elevated flex items-center gap-2">
@@ -781,7 +776,10 @@ async function markAsNotInterested(reply: Reply) {
         </div>
 
         <!-- Right: Thread View -->
-        <div class="flex-1 flex flex-col overflow-hidden">
+        <div
+          class="flex-1 flex flex-col overflow-hidden"
+          :class="{ 'hidden md:flex': !selectedId }"
+        >
           <div v-if="!selectedId" class="flex-1 flex items-center justify-center text-muted">
             Select an email to view
           </div>
@@ -792,21 +790,31 @@ async function markAsNotInterested(reply: Reply) {
 
           <template v-else-if="threadData">
             <!-- Thread Header -->
-            <div class="p-4 border-b border-default flex items-center justify-between">
-              <div>
-                <h2 class="font-semibold">{{ threadData.current_reply.subject }}</h2>
-                <div class="text-sm text-muted">
-                  {{ threadData.current_reply.from_name || threadData.current_reply.from_email_address }}
+            <div class="p-4 border-b border-default flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <UButton
+                  icon="i-lucide-arrow-left"
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  class="md:hidden shrink-0"
+                  @click="selectedId = null"
+                />
+                <div class="min-w-0">
+                  <h2 class="font-semibold truncate">{{ threadData.current_reply.subject }}</h2>
+                  <div class="text-sm text-muted">
+                    {{ threadData.current_reply.from_name || threadData.current_reply.from_email_address }}
+                  </div>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                 <UButton
                   icon="i-lucide-reply"
                   color="primary"
                   size="sm"
                   @click="openCompose"
                 >
-                  Reply
+                  <span class="hidden sm:inline">Reply</span>
                 </UButton>
                 <UButton
                   v-if="!threadData.current_reply.interested"
@@ -817,7 +825,7 @@ async function markAsNotInterested(reply: Reply) {
                   :loading="updatingIds.has(threadData.current_reply.id)"
                   @click="markAsInterested(threadData!.current_reply)"
                 >
-                  Interested
+                  <span class="hidden sm:inline">Interested</span>
                 </UButton>
                 <span
                   v-else
@@ -832,7 +840,7 @@ async function markAsNotInterested(reply: Reply) {
                   size="sm"
                   @click="archivedIds.has(threadData!.current_reply.id) ? unarchiveReply(threadData!.current_reply.id) : archiveReply(threadData!.current_reply.id)"
                 >
-                  {{ archivedIds.has(threadData.current_reply.id) ? 'Unarchive' : 'Archive' }}
+                  <span class="hidden sm:inline">{{ archivedIds.has(threadData.current_reply.id) ? 'Unarchive' : 'Archive' }}</span>
                 </UButton>
               </div>
             </div>

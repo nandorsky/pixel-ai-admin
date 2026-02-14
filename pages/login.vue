@@ -12,14 +12,8 @@ const email = ref('')
 const isLoading = ref(false)
 const emailSent = ref(false)
 
-// Redirect to home if already authenticated or on localhost
+// Redirect to home if already authenticated
 onMounted(async () => {
-  // Skip login on localhost
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    navigateTo('/')
-    return
-  }
-
   const { data: { session } } = await supabase.auth.getSession()
   if (session) {
     navigateTo('/')
