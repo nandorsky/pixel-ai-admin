@@ -25,6 +25,13 @@ const links = [[{
     open.value = false
   }
 }, {
+  label: 'Signups',
+  icon: 'i-lucide-user-plus',
+  to: '/app-signups',
+  onSelect: () => {
+    open.value = false
+  }
+}, {
   label: 'Referrals',
   icon: 'i-lucide-share-2',
   to: '/referrals',

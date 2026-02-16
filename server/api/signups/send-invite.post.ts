@@ -19,8 +19,8 @@ export default defineEventHandler(async (event) => {
     config.public.supabaseKey as string
   )
 
-  const template = buildInviteTemplate()
-  const subject = `You're in — and you're starting with {{credits}} credits`
+  const template = body.htmlTemplate || buildInviteTemplate()
+  const subject = body.subject || `You're in — and you're starting with {{credits}} credits`
   const results: { id: number; status: string; error?: string }[] = []
 
   for (const id of ids) {

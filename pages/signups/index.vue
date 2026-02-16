@@ -64,6 +64,18 @@ const data = ref<Signup[]>([])
 const referralCounts = ref<Record<string, number>>({})
 const isFetching = ref(true)
 const sourceFilter = ref('__all__')
+const viewTab = ref('all')
+
+const filteredData = computed(() => {
+  if (viewTab.value === 'needs_invite') {
+    return data.value.filter(s => s.product_access && !s.invite_sent_at)
+  }
+  return data.value
+})
+
+const needsInviteCount = computed(() =>
+  data.value.filter(s => s.product_access && !s.invite_sent_at).length
+)
 
 const uniqueSources = computed(() => {
   const sources = new Set<string>()
@@ -200,6 +212,9 @@ const showInviteModal = ref(false)
 const inviteSubject = ref('')
 const previewHtml = ref('')
 const loadingPreview = ref(false)
+const previewRef = ref<HTMLElement | null>(null)
+const previewFirstName = ref('')
+const previewCredits = ref(0)
 
 const selectedRows = computed(() => {
   const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
@@ -221,6 +236,8 @@ async function openInviteModal() {
 
     inviteSubject.value = subject
     previewHtml.value = html
+    previewFirstName.value = first.first_name || ''
+    previewCredits.value = getTotalCredits(first)
   } catch (err: any) {
     toast.add({
       title: 'Error loading preview',
@@ -239,10 +256,24 @@ async function confirmSendInvites() {
 
   sendingInvites.value = true
   try {
+    // Capture edited content and restore placeholders for per-recipient personalization
+    const editedHtml = previewRef.value?.innerHTML || previewHtml.value
+    const creditsStr = previewCredits.value.toLocaleString()
+    const greeting = previewFirstName.value ? `Hey ${previewFirstName.value}, welcome` : 'Welcome'
+
+    let htmlTemplate = editedHtml
+      .replace(new RegExp(greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{greeting}}')
+      .replace(new RegExp(`<strong>${creditsStr} credits</strong>`, 'g'), '<strong>{{credits}} credits</strong>')
+
+    let customSubject = inviteSubject.value
+      .replace(new RegExp(creditsStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{credits}}')
+
     const { results } = await $fetch('/api/signups/send-invite', {
       method: 'POST',
       body: {
-        ids: selected.map(s => s.id)
+        ids: selected.map(s => s.id),
+        subject: customSubject,
+        htmlTemplate
       }
     }) as { results: { id: number; status: string; error?: string }[] }
 
@@ -360,6 +391,11 @@ watch(sourceFilter, (val) => {
   pagination.value.pageIndex = 0
 })
 
+watch(viewTab, () => {
+  rowSelection.value = {}
+  pagination.value.pageIndex = 0
+})
+
 const pagination = ref({
   pageIndex: 0,
   pageSize: 50
@@ -377,6 +413,23 @@ const pagination = ref({
     </template>
 
     <template #body>
+      <div class="flex items-center gap-4 border-b border-default mb-4 -mt-2">
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'all' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'all'"
+        >
+          All ({{ data.length }})
+        </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'needs_invite' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'needs_invite'"
+        >
+          Needs Invite ({{ needsInviteCount }})
+        </button>
+      </div>
+
       <div class="flex flex-wrap items-center justify-between gap-1.5">
         <div class="flex items-center gap-1.5">
           <UInput
@@ -448,7 +501,7 @@ const pagination = ref({
           getPaginationRowModel: getPaginationRowModel()
         }"
         class="shrink-0"
-        :data="data"
+        :data="filteredData"
         :columns="columns"
         :loading="isFetching"
         :ui="{
@@ -562,7 +615,7 @@ const pagination = ref({
 
       <div class="flex items-center justify-between gap-3 border-t border-default pt-4 mt-auto">
         <div class="text-sm text-muted">
-          {{ data.length }} signup(s) total
+          {{ filteredData.length }} signup(s){{ viewTab !== 'all' ? ' matching' : ' total' }}
         </div>
 
         <div class="flex items-center gap-1.5">
@@ -601,7 +654,7 @@ const pagination = ref({
         <!-- Subject -->
         <div>
           <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
-          <div class="text-sm">{{ inviteSubject }}</div>
+          <UInput v-model="inviteSubject" class="w-full" />
         </div>
 
         <!-- Preview -->
@@ -612,7 +665,9 @@ const pagination = ref({
           </div>
           <div
             v-else
-            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96"
+            ref="previewRef"
+            contenteditable="true"
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96 focus:outline-none focus:ring-2 focus:ring-primary"
             v-html="previewHtml"
           />
           <p v-if="selectedRows.length > 1" class="text-xs text-muted mt-1">
