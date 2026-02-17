@@ -70,13 +70,16 @@ export default defineEventHandler(async (event) => {
         continue
       }
 
-      const { error: updateError } = await supabase
+      const { data: updateData, error: updateError } = await supabase
         .from('signups')
         .update({ invite_sent_at: new Date().toISOString() })
         .eq('id', id)
+        .select('id')
 
       if (updateError) {
         results.push({ id, status: 'error', error: `Email sent but failed to update record: ${updateError.message}` })
+      } else if (!updateData || updateData.length === 0) {
+        results.push({ id, status: 'error', error: 'Email sent but invite_sent_at not updated (RLS may be blocking updates)' })
       } else {
         results.push({ id, status: 'sent' })
       }

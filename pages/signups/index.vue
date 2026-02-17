@@ -70,11 +70,18 @@ const filteredData = computed(() => {
   if (viewTab.value === 'needs_invite') {
     return data.value.filter(s => s.product_access && !s.invite_sent_at)
   }
+  if (viewTab.value === 'no_access') {
+    return data.value.filter(s => !s.product_access)
+  }
   return data.value
 })
 
 const needsInviteCount = computed(() =>
   data.value.filter(s => s.product_access && !s.invite_sent_at).length
+)
+
+const noAccessCount = computed(() =>
+  data.value.filter(s => !s.product_access).length
 )
 
 const uniqueSources = computed(() => {
@@ -420,6 +427,13 @@ const pagination = ref({
           @click="viewTab = 'all'"
         >
           All ({{ data.length }})
+        </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'no_access' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'no_access'"
+        >
+          No Access ({{ noAccessCount }})
         </button>
         <button
           class="pb-2 text-sm font-medium border-b-2 transition-colors"

@@ -16,30 +16,28 @@ export function buildInviteTemplate(): string {
      style="display: inline-block; margin: 24px 0; padding: 12px 28px;
             background-color: #16a34a; color: #fff; text-decoration: none;
             border-radius: 8px; font-weight: 600; font-size: 16px;">
-    Get Started
+    Run Your First Campaign
   </a>
 
-  <h2 style="font-size: 18px; font-weight: 600; margin-top: 32px; margin-bottom: 8px; color: #111;">
-    Want to share feedback?
-  </h2>
-
-  <p style="font-size: 16px; line-height: 1.6; color: #333;">
-    I'm
-    <a href="https://www.linkedin.com/in/nate-andorsky/" style="color: #16a34a; text-decoration: underline;">Nate Andorsky</a>
-    — I've been helping launch Pixel and I'm the face behind these emails.
-    We're building this alongside our early users, so your feedback matters a lot.
-  </p>
-
   <p style="font-size: 16px; line-height: 1.6; color: #333; margin-top: 16px;">
-    Once you've had a chance to explore, I'd love to hear what's working and what's not —
-    <a href="https://calendly.com/patent355/pixel-feedback" style="color: #16a34a; text-decoration: underline;">book a call with me</a>
-    anytime.
+    If you run into any issues, reach out to us at
+    <a href="mailto:support@getpixel.ai" style="color: #16a34a; text-decoration: underline;">support@getpixel.ai</a>.
   </p>
 
-  <p style="font-size: 16px; line-height: 1.6; color: #333; margin-top: 24px;">
-    Talk soon,<br>
-    Nate
-  </p>
+  <table style="margin-top: 32px;" cellpadding="0" cellspacing="0">
+    <tr>
+      <td style="vertical-align: middle; padding-right: 14px;">
+        <img src="https://media.licdn.com/dms/image/v2/D4D03AQFyOihrLRzjGA/profile-displayphoto-scale_400_400/B4DZqhjozHKEAg-/0/1763647069405?e=1772668800&v=beta&t=-UY_oz6W87R01xSvPMh0RMHxo3qVEqs_in8cyKCohqQ"
+             alt="Gil Allouche"
+             width="48" height="48"
+             style="border-radius: 50%; display: block;" />
+      </td>
+      <td style="vertical-align: middle;">
+        <p style="margin: 0; font-size: 16px; font-weight: 600; color: #111;">Gil Allouche</p>
+        <p style="margin: 2px 0 0; font-size: 14px; color: #666;">Founder, Pixel</p>
+      </td>
+    </tr>
+  </table>
 
 </div>`
 }

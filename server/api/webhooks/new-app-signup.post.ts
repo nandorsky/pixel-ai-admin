@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
   const { error } = await resend.emails.send({
     from: 'Pixel <notifications@notifications.getpixel.ai>',
     to: 'nate@patent355.com',
+    cc: 'support@getpixel.ai',
     subject: `New Pixel Signup: ${email}`,
     html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; padding: 20px;">
   <h2 style="font-size: 18px; margin-bottom: 16px;">New App Signup</h2>
