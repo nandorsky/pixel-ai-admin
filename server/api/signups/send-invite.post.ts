@@ -58,15 +58,21 @@ export default defineEventHandler(async (event) => {
     })
 
     try {
-      const { data: emailResult, error: emailError } = await resend.emails.send({
+      const resendResponse = await resend.emails.send({
         from: 'Pixel <notifications@notifications.getpixel.ai>',
+        replyTo: 'support@getpixel.ai',
         to: signup.email,
         subject: subject.replace('{{credits}}', credits.toLocaleString()),
         html
       })
 
-      if (emailError) {
-        results.push({ id, status: 'error', error: emailError.message })
+      if (resendResponse.error) {
+        results.push({ id, status: 'error', error: resendResponse.error.message })
+        continue
+      }
+
+      if (!resendResponse.data?.id) {
+        results.push({ id, status: 'error', error: 'Resend returned no email ID' })
         continue
       }
 
