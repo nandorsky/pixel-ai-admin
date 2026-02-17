@@ -23,6 +23,7 @@ export default defineEventHandler(async (event) => {
 
   const { error } = await resend.emails.send({
     from: 'Pixel <notifications@notifications.getpixel.ai>',
+    replyTo: 'support@getpixel.ai',
     to: 'nate@patent355.com',
     cc: 'support@getpixel.ai',
     subject: `New Pixel Signup: ${email}`,

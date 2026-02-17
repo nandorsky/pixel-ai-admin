@@ -27,6 +27,8 @@ interface Signup {
   created_at: string
   utm_parameters: Record<string, string> | null
   linkedin_json: LinkedInJson | null
+  product_access: boolean | null
+  invite_sent_at: string | null
 }
 
 function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
@@ -46,6 +48,13 @@ const loading = ref(true)
 
 // Stats
 const totalSignups = computed(() => signups.value.length)
+const invitesSent = computed(() => signups.value.filter(s => s.invite_sent_at).length)
+const appSignupsEmails = ref<string[]>([])
+const appSignupsTotal = computed(() => appSignupsEmails.value.length)
+const appSignupsFromWaitlist = computed(() => {
+  const waitlistEmailSet = new Set(signups.value.map(s => s.email.toLowerCase()))
+  return appSignupsEmails.value.filter(e => waitlistEmailSet.has(e.toLowerCase())).length
+})
 const referralsCount = computed(() => {
   const usedCodes = new Set(signups.value.map(s => s.referred_by).filter(Boolean))
   return signups.value.filter(s => usedCodes.has(s.referral_code)).length
@@ -60,14 +69,20 @@ const todaySignups = computed(() => {
 })
 
 onMounted(async () => {
-  const { data, error } = await supabase
-    .from('signups')
-    .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters, linkedin_json')
-    .order('created_at', { ascending: true })
+  const [signupsResult, appSignupsResult] = await Promise.all([
+    supabase
+      .from('signups')
+      .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters, linkedin_json, product_access, invite_sent_at')
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('app_signups')
+      .select('json_payload')
+  ])
 
-  if (!error && data) {
-    signups.value = data
+  if (!signupsResult.error && signupsResult.data) {
+    signups.value = signupsResult.data
   }
+  appSignupsEmails.value = (appSignupsResult.data || []).map((r: any) => r.json_payload?.email).filter(Boolean)
   loading.value = false
 })
 
@@ -215,10 +230,19 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
 
     <template #body>
       <!-- Stats Row -->
-      <div class="grid grid-cols-4 gap-px bg-default/50 rounded-lg mb-8">
+      <div class="grid grid-cols-3 lg:grid-cols-6 gap-px bg-default/50 rounded-lg mb-8">
         <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Signups</p>
+          <p class="text-xs text-muted uppercase tracking-wide">Waitlist</p>
           <p class="text-3xl font-semibold text-highlighted mt-1">{{ totalSignups.toLocaleString() }}</p>
+        </div>
+        <div class="bg-elevated p-6">
+          <p class="text-xs text-muted uppercase tracking-wide">Invites Sent</p>
+          <p class="text-3xl font-semibold text-highlighted mt-1">{{ invitesSent.toLocaleString() }}</p>
+        </div>
+        <div class="bg-elevated p-6">
+          <p class="text-xs text-muted uppercase tracking-wide">App Signups</p>
+          <p class="text-3xl font-semibold text-highlighted mt-1">{{ appSignupsTotal.toLocaleString() }}<span class="text-lg text-muted font-normal"> / {{ invitesSent.toLocaleString() }}</span></p>
+          <p v-if="invitesSent > 0" class="text-xs text-muted mt-1">{{ Math.round((appSignupsTotal / invitesSent) * 100) }}% conversion</p>
         </div>
         <div class="bg-elevated p-6">
           <p class="text-xs text-muted uppercase tracking-wide">Referrers</p>

@@ -225,7 +225,7 @@ const previewCredits = ref(0)
 
 const selectedRows = computed(() => {
   const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
-  return indices.map(i => data.value[Number(i)]).filter(Boolean)
+  return indices.map(i => filteredData.value[Number(i)]).filter(Boolean)
 })
 
 async function openInviteModal() {
@@ -405,7 +405,7 @@ watch(viewTab, () => {
 
 const pagination = ref({
   pageIndex: 0,
-  pageSize: 50
+  pageSize: 25
 })
 </script>
 
