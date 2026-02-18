@@ -67,7 +67,7 @@ const links = [[{
     open.value = false
   }
 }, {
-  label: 'Traces',
+  label: 'Prompts',
   icon: 'i-lucide-activity',
   to: '/traces',
   onSelect: () => {

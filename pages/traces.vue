@@ -34,6 +34,7 @@ const totalTraces = ref(0)
 const selectedTrace = ref<Trace | null>(null)
 const showDetail = ref(false)
 const detailTab = ref('creative')
+const expandedSteps = ref<Set<number>>(new Set())
 
 const page = ref(1)
 const pageSize = 50
@@ -81,14 +82,15 @@ function getWaitlistName(email: string | null): string | null {
 async function fetchTraces() {
   isFetching.value = true
   try {
+    // Over-fetch to account for test user filtering, then trim to pageSize
     const result = await $fetch<any>('/api/opik/traces', {
-      params: { page: page.value, size: pageSize }
+      params: { page: page.value, size: pageSize + testEmails.value.size * 5 }
     })
     const allTraces: Trace[] = result.content || []
     data.value = allTraces.filter(t => {
       const email = getUserEmail(t)
       return !email || !testEmails.value.has(email.toLowerCase())
-    })
+    }).slice(0, pageSize)
     totalTraces.value = result.total || 0
   } catch (err: any) {
     toast.add({
@@ -112,6 +114,7 @@ watch(page, () => {
 function openDetail(trace: Trace) {
   selectedTrace.value = trace
   detailTab.value = 'creative'
+  expandedSteps.value = new Set()
   showDetail.value = true
 }
 
@@ -182,6 +185,25 @@ function getCreativeContent(trace: Trace): string[] {
     .map(m => m.content)
 }
 
+function getImageUrls(trace: Trace): string[] {
+  if (!trace.output?.messages?.length) return []
+  const urls: string[] = []
+  const pngRegex = /https?:\/\/[^\s"']+\.png/gi
+
+  for (const msg of trace.output.messages) {
+    const content = msg.content || ''
+    const text = typeof content === 'string' ? content : JSON.stringify(content)
+    const matches = text.match(pngRegex)
+    if (matches) {
+      for (const url of matches) {
+        if (!urls.includes(url)) urls.push(url)
+      }
+    }
+  }
+
+  return urls
+}
+
 function formatDuration(ms: number | null): string {
   if (ms === null || ms === undefined) return '—'
   if (ms < 1000) return `${Math.round(ms)}ms`
@@ -227,7 +249,7 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
 <template>
   <UDashboardPanel id="traces">
     <template #header>
-      <UDashboardNavbar title="Traces">
+      <UDashboardNavbar title="Prompts">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
@@ -314,6 +336,10 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
                 <UIcon name="i-lucide-dollar-sign" class="size-3" />
                 {{ trace.total_estimated_cost.toFixed(4) }}
               </span>
+              <span v-if="getImageUrls(trace).length" class="inline-flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                <UIcon name="i-lucide-image" class="size-3" />
+                {{ getImageUrls(trace).length }} image{{ getImageUrls(trace).length > 1 ? 's' : '' }}
+              </span>
             </div>
           </div>
         </div>
@@ -348,7 +374,7 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
   </UDashboardPanel>
 
   <!-- Detail Slideover -->
-  <USlideover v-model:open="showDetail" :ui="{ width: 'max-w-4xl' }">
+  <USlideover v-model:open="showDetail" :ui="{ content: 'max-w-[56rem]' }">
     <template #header>
       <div v-if="selectedTrace" class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1">
@@ -406,20 +432,24 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
 
         <!-- Creative view -->
         <div v-if="detailTab === 'creative'" class="space-y-4">
-          <template v-if="getCreativeContent(selectedTrace).length">
-            <div
-              v-for="(content, idx) in getCreativeContent(selectedTrace)"
+          <!-- Images -->
+          <div v-if="getImageUrls(selectedTrace).length" class="grid grid-cols-4 gap-3">
+            <a
+              v-for="(url, idx) in getImageUrls(selectedTrace)"
               :key="idx"
-              class="rounded-lg border border-default bg-elevated/50 p-4"
+              :href="url"
+              target="_blank"
+              class="block rounded-lg border border-default overflow-hidden hover:ring-2 hover:ring-primary/50 transition-shadow"
             >
-              <div class="flex items-center gap-2 mb-3">
-                <UIcon name="i-lucide-sparkles" class="size-4 text-primary" />
-                <span class="text-xs font-medium text-muted">Creative {{ getCreativeContent(selectedTrace).length > 1 ? `#${idx + 1}` : '' }}</span>
-              </div>
-              <div class="text-sm text-highlighted whitespace-pre-wrap leading-relaxed">{{ content }}</div>
-            </div>
-          </template>
-          <div v-else class="text-sm text-muted text-center py-8">
+              <img
+                :src="url"
+                :alt="`Creative ${idx + 1}`"
+                class="w-full h-auto object-contain bg-neutral-50 dark:bg-neutral-900"
+              />
+            </a>
+          </div>
+
+          <div v-if="!getImageUrls(selectedTrace).length" class="text-sm text-muted text-center py-8">
             No creative content in this trace
           </div>
         </div>
@@ -448,32 +478,56 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
                   AI
                   <span v-if="msg.model" class="font-normal text-dimmed ml-1">{{ msg.model }}</span>
                 </p>
-                <p v-if="msg.content" class="text-sm text-highlighted whitespace-pre-wrap mb-2">{{ msg.content }}</p>
-                <div v-if="msg.toolCalls?.length" class="flex flex-wrap gap-1.5">
-                  <div
-                    v-for="(tc, tcIdx) in msg.toolCalls"
-                    :key="tcIdx"
-                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-xs"
+                <p v-if="msg.content" class="text-sm text-highlighted whitespace-pre-wrap">{{ msg.content }}</p>
+                <!-- Tool calls as expandable -->
+                <div v-if="msg.toolCalls?.length" class="mt-2">
+                  <button
+                    class="flex items-center gap-1.5 text-xs text-muted hover:text-default transition-colors"
+                    @click.stop="expandedSteps.has(idx) ? expandedSteps.delete(idx) : expandedSteps.add(idx)"
                   >
-                    <UIcon name="i-lucide-wrench" class="size-3 text-amber-600 dark:text-amber-400" />
-                    <span class="font-medium text-amber-700 dark:text-amber-300">{{ tc.name }}</span>
+                    <UIcon
+                      :name="expandedSteps.has(idx) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                      class="size-3.5"
+                    />
+                    <span class="flex items-center gap-1.5">
+                      <UIcon name="i-lucide-wrench" class="size-3 text-amber-600 dark:text-amber-400" />
+                      {{ msg.toolCalls.map(tc => tc.name).join(', ') }}
+                    </span>
+                  </button>
+                  <div v-if="expandedSteps.has(idx)" class="mt-2 space-y-2">
+                    <div
+                      v-for="(tc, tcIdx) in msg.toolCalls"
+                      :key="tcIdx"
+                      class="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/50 p-2"
+                    >
+                      <p class="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">{{ tc.name }}</p>
+                      <pre class="text-xs text-muted whitespace-pre-wrap break-words max-h-40 overflow-auto">{{ JSON.stringify(tc.args, null, 2) }}</pre>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Tool response -->
-            <div v-else-if="msg.type === 'tool'" class="flex gap-3 pl-10">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <UIcon
-                    :name="msg.toolStatus === 'error' ? 'i-lucide-x-circle' : 'i-lucide-check-circle'"
-                    :class="msg.toolStatus === 'error' ? 'size-3 text-red-500' : 'size-3 text-green-500'"
-                  />
-                  <span class="text-xs font-medium text-muted">{{ msg.toolName }}</span>
-                </div>
-                <pre class="text-xs bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-auto max-h-32 whitespace-pre-wrap break-words text-muted">{{ msg.content }}</pre>
-              </div>
+            <!-- Tool response (expandable) -->
+            <div v-else-if="msg.type === 'tool'" class="pl-10">
+              <button
+                class="flex items-center gap-1.5 text-xs text-muted hover:text-default transition-colors"
+                @click.stop="expandedSteps.has(idx) ? expandedSteps.delete(idx) : expandedSteps.add(idx)"
+              >
+                <UIcon
+                  :name="expandedSteps.has(idx) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                  class="size-3.5"
+                />
+                <UIcon
+                  :name="msg.toolStatus === 'error' ? 'i-lucide-x-circle' : 'i-lucide-check-circle'"
+                  :class="msg.toolStatus === 'error' ? 'size-3 text-red-500' : 'size-3 text-green-500'"
+                />
+                <span>{{ msg.toolName }} response</span>
+              </button>
+              <pre
+                v-if="expandedSteps.has(idx)"
+                class="mt-2 text-xs bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap break-words text-muted"
+              >{{ msg.content }}</pre>
             </div>
           </template>
 
