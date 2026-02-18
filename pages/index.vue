@@ -49,11 +49,11 @@ const loading = ref(true)
 // Stats
 const totalSignups = computed(() => signups.value.length)
 const invitesSent = computed(() => signups.value.filter(s => s.invite_sent_at).length)
-const appSignupsEmails = ref<string[]>([])
-const appSignupsTotal = computed(() => appSignupsEmails.value.length)
+const appSignupsRaw = ref<{ email: string; created_at: string }[]>([])
+const appSignupsTotal = computed(() => appSignupsRaw.value.length)
 const appSignupsFromWaitlist = computed(() => {
   const waitlistEmailSet = new Set(signups.value.map(s => s.email.toLowerCase()))
-  return appSignupsEmails.value.filter(e => waitlistEmailSet.has(e.toLowerCase())).length
+  return appSignupsRaw.value.filter(e => waitlistEmailSet.has(e.email.toLowerCase())).length
 })
 const referralsCount = computed(() => {
   const usedCodes = new Set(signups.value.map(s => s.referred_by).filter(Boolean))
@@ -76,13 +76,15 @@ onMounted(async () => {
       .order('created_at', { ascending: true }),
     supabase
       .from('app_signups')
-      .select('json_payload')
+      .select('created_at, json_payload')
   ])
 
   if (!signupsResult.error && signupsResult.data) {
     signups.value = signupsResult.data
   }
-  appSignupsEmails.value = (appSignupsResult.data || []).map((r: any) => r.json_payload?.email).filter(Boolean)
+  appSignupsRaw.value = (appSignupsResult.data || [])
+    .filter((r: any) => r.json_payload?.email)
+    .map((r: any) => ({ email: r.json_payload.email, created_at: r.created_at }))
   loading.value = false
 })
 
@@ -121,6 +123,46 @@ const chartData = computed<ChartRecord[]>(() => {
     return { date, count: runningTotal }
   })
 })
+
+// Build app signups chart data
+const appSignupsChartData = computed<ChartRecord[]>(() => {
+  if (!appSignupsRaw.value.length) return []
+
+  const range = {
+    start: sub(new Date(), { days: 30 }),
+    end: new Date()
+  }
+
+  const dates = eachDayOfInterval(range)
+  const countsByDate = new Map<string, number>()
+
+  dates.forEach(date => {
+    countsByDate.set(startOfDay(date).toISOString(), 0)
+  })
+
+  appSignupsRaw.value.forEach(signup => {
+    const signupDate = startOfDay(new Date(signup.created_at)).toISOString()
+    if (countsByDate.has(signupDate)) {
+      countsByDate.set(signupDate, (countsByDate.get(signupDate) || 0) + 1)
+    }
+  })
+
+  const baseline = appSignupsRaw.value.filter(s => new Date(s.created_at) < range.start).length
+
+  let runningTotal = baseline
+  return dates.map(date => {
+    runningTotal += countsByDate.get(startOfDay(date).toISOString()) || 0
+    return { date, count: runningTotal }
+  })
+})
+
+const appX = (_: ChartRecord, i: number) => i
+const appY = (d: ChartRecord) => d.count
+const appXTicks = (i: number) => {
+  if (!appSignupsChartData.value[i] || i === 0 || i === appSignupsChartData.value.length - 1) return ''
+  return format(appSignupsChartData.value[i].date, 'd MMM')
+}
+const appTooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} total`
 
 function formatName(firstName: string | null, lastName: string | null): string {
   return `${firstName || ''} ${lastName || ''}`.trim()
@@ -308,6 +350,35 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- App Signups Chart -->
+      <div class="mb-8">
+        <div class="flex items-baseline justify-between mb-4">
+          <h2 class="text-sm font-medium text-highlighted">App Signups</h2>
+          <span class="text-xs text-muted">Last 30 days</span>
+        </div>
+        <div class="bg-elevated rounded-lg p-4 pt-8 ps-12 h-72">
+          <div v-if="loading" class="h-full flex items-center justify-center">
+            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+          </div>
+          <VisXYContainer
+            v-else-if="appSignupsChartData.length > 0"
+            :data="appSignupsChartData"
+            :padding="{ top: 20 }"
+            class="h-full"
+          >
+            <VisLine :x="appX" :y="appY" color="rgb(34, 197, 94)" />
+            <VisArea :x="appX" :y="appY" color="rgb(34, 197, 94)" :opacity="0.1" />
+            <VisAxis type="x" :x="appX" :tick-format="appXTicks" />
+            <VisAxis type="y" :y="appY" />
+            <VisCrosshair color="rgb(34, 197, 94)" :template="appTooltipTemplate" />
+            <VisTooltip />
+          </VisXYContainer>
+          <div v-else class="h-full flex items-center justify-center text-sm text-muted">
+            No app signups yet
           </div>
         </div>
       </div>

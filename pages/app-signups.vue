@@ -116,21 +116,6 @@ const columns: TableColumn<AppSignup>[] = [
     size: 250
   },
   {
-    id: 'referredBy',
-    header: 'Referred By',
-    accessorFn: (row) => row.json_payload?.referredBy || ''
-  },
-  {
-    id: 'earlyAccess',
-    header: 'Early Access',
-    accessorFn: (row) => row.json_payload?.earlyAccess
-  },
-  {
-    id: 'referralCode',
-    header: 'Referral Code',
-    accessorFn: (row) => row.json_payload?.referralCode || ''
-  },
-  {
     accessorKey: 'created_at',
     header: 'Signed Up'
   }
@@ -199,6 +184,9 @@ const searchFilter = computed({
                 {{ [waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name, waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name].filter(Boolean).map((n: string) => n.charAt(0)).join('').toUpperCase() || row.original.json_payload.email.charAt(0).toUpperCase() }}
               </div>
             </template>
+            <div v-else class="w-8 h-8 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+              {{ (row.original.json_payload?.email || '?').charAt(0).toUpperCase() }}
+            </div>
             <div class="min-w-0">
               <template v-if="waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]">
                 <NuxtLink
@@ -228,32 +216,6 @@ const searchFilter = computed({
           </div>
         </template>
 
-        <template #referredBy-cell="{ row }">
-          <span v-if="row.original.json_payload?.referredBy" class="font-mono text-xs">
-            {{ row.original.json_payload.referredBy }}
-          </span>
-          <span v-else class="text-muted">—</span>
-        </template>
-
-        <template #earlyAccess-cell="{ row }">
-          <UIcon
-            v-if="row.original.json_payload?.earlyAccess"
-            name="i-lucide-check-circle"
-            class="w-5 h-5 text-green-600"
-          />
-          <UIcon
-            v-else
-            name="i-lucide-x-circle"
-            class="w-5 h-5 text-gray-400"
-          />
-        </template>
-
-        <template #referralCode-cell="{ row }">
-          <span v-if="row.original.json_payload?.referralCode" class="font-mono text-xs">
-            {{ row.original.json_payload.referralCode }}
-          </span>
-          <span v-else class="text-muted">—</span>
-        </template>
 
         <template #created_at-cell="{ row }">
           {{ formatDate(row.original.created_at) }}

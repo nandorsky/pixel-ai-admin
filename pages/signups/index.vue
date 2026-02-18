@@ -66,12 +66,17 @@ const isFetching = ref(true)
 const sourceFilter = ref('__all__')
 const viewTab = ref('all')
 
+const twoDaysAgo = computed(() => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000))
+
 const filteredData = computed(() => {
   if (viewTab.value === 'needs_invite') {
     return data.value.filter(s => s.product_access && !s.invite_sent_at)
   }
   if (viewTab.value === 'no_access') {
     return data.value.filter(s => !s.product_access)
+  }
+  if (viewTab.value === 'follow_up') {
+    return data.value.filter(s => s.invite_sent_at && new Date(s.invite_sent_at) < twoDaysAgo.value)
   }
   return data.value
 })
@@ -82,6 +87,10 @@ const needsInviteCount = computed(() =>
 
 const noAccessCount = computed(() =>
   data.value.filter(s => !s.product_access).length
+)
+
+const followUpCount = computed(() =>
+  data.value.filter(s => s.invite_sent_at && new Date(s.invite_sent_at) < twoDaysAgo.value).length
 )
 
 const uniqueSources = computed(() => {
@@ -441,6 +450,13 @@ const pagination = ref({
           @click="viewTab = 'needs_invite'"
         >
           Needs Invite ({{ needsInviteCount }})
+        </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'follow_up' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'follow_up'"
+        >
+          Follow Up ({{ followUpCount }})
         </button>
       </div>
 
