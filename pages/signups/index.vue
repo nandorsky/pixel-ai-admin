@@ -6,6 +6,7 @@ import { getPaginationRowModel, getFilteredRowModel } from '@tanstack/table-core
 import { getSignupSource, getSourceColor } from '~/utils/signup-source'
 
 const UCheckbox = resolveComponent('UCheckbox')
+const UButton = resolveComponent('UButton')
 
 const supabase = useSupabase()
 
@@ -46,10 +47,13 @@ interface Signup {
   linkedin_json: LinkedInJson | null
   product_access: boolean | null
   invite_sent_at: string | null
+  follow_up_sent_at: string | null
 }
 
 const toast = useToast()
 const table = useTemplateRef('table')
+
+const sorting = ref([{ id: 'created_at', desc: true }])
 
 const columnFilters = ref([{
   id: 'name',
@@ -62,11 +66,10 @@ const rowSelection = ref({})
 
 const data = ref<Signup[]>([])
 const referralCounts = ref<Record<string, number>>({})
+const appSignupEmails = ref<Set<string>>(new Set())
 const isFetching = ref(true)
 const sourceFilter = ref('__all__')
 const viewTab = ref('all')
-
-const twoDaysAgo = computed(() => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000))
 
 const filteredData = computed(() => {
   if (viewTab.value === 'needs_invite') {
@@ -76,7 +79,7 @@ const filteredData = computed(() => {
     return data.value.filter(s => !s.product_access)
   }
   if (viewTab.value === 'follow_up') {
-    return data.value.filter(s => s.invite_sent_at && new Date(s.invite_sent_at) < twoDaysAgo.value)
+    return data.value.filter(s => s.invite_sent_at && !s.follow_up_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase()))
   }
   return data.value
 })
@@ -90,7 +93,7 @@ const noAccessCount = computed(() =>
 )
 
 const followUpCount = computed(() =>
-  data.value.filter(s => s.invite_sent_at && new Date(s.invite_sent_at) < twoDaysAgo.value).length
+  data.value.filter(s => s.invite_sent_at && !s.follow_up_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase())).length
 )
 
 const uniqueSources = computed(() => {
@@ -114,7 +117,7 @@ async function fetchSignups() {
   isFetching.value = true
   const { data: signups, error } = await supabase
     .from('signups')
-    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json, product_access, invite_sent_at')
+    .select('id, created_at, email, first_name, last_name, referral_code, referred_by, utm_parameters, linkedin_json, product_access, invite_sent_at, follow_up_sent_at')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -137,8 +140,18 @@ async function fetchSignups() {
   isFetching.value = false
 }
 
+async function fetchAppSignupEmails() {
+  const { data: rows } = await supabase
+    .from('app_signups')
+    .select('json_payload')
+  appSignupEmails.value = new Set(
+    (rows || []).map((r: any) => r.json_payload?.email?.toLowerCase()).filter(Boolean)
+  )
+}
+
 onMounted(() => {
   fetchSignups()
+  fetchAppSignupEmails()
 })
 
 function copyToClipboard(text: string, label: string) {
@@ -335,6 +348,104 @@ async function confirmSendInvites() {
   }
 }
 
+const sendingFollowUps = ref(false)
+const showFollowUpModal = ref(false)
+const followUpSubject = ref('')
+const followUpPreviewHtml = ref('')
+const loadingFollowUpPreview = ref(false)
+const followUpPreviewRef = ref<HTMLElement | null>(null)
+const followUpPreviewFirstName = ref('')
+
+async function openFollowUpModal() {
+  const first = selectedRows.value[0]
+  if (!first) return
+
+  showFollowUpModal.value = true
+  loadingFollowUpPreview.value = true
+
+  try {
+    const { subject, html } = await $fetch('/api/signups/preview-followup', {
+      method: 'POST',
+      body: { id: first.id }
+    }) as { subject: string; html: string }
+
+    followUpSubject.value = subject
+    followUpPreviewHtml.value = html
+    followUpPreviewFirstName.value = first.first_name || ''
+  } catch (err: any) {
+    toast.add({
+      title: 'Error loading preview',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+    showFollowUpModal.value = false
+  } finally {
+    loadingFollowUpPreview.value = false
+  }
+}
+
+async function confirmSendFollowUps() {
+  const selected = selectedRows.value
+  if (selected.length === 0) return
+
+  sendingFollowUps.value = true
+  try {
+    const editedHtml = followUpPreviewRef.value?.innerHTML || followUpPreviewHtml.value
+    const greeting = followUpPreviewFirstName.value ? `Hey ${followUpPreviewFirstName.value},` : 'Hey there,'
+
+    let htmlTemplate = editedHtml
+      .replace(new RegExp(greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{greeting}}')
+
+    const { results } = await $fetch('/api/signups/send-followup', {
+      method: 'POST',
+      body: {
+        ids: selected.map(s => s.id),
+        subject: followUpSubject.value,
+        htmlTemplate
+      }
+    }) as { results: { id: number; status: string; error?: string }[] }
+
+    const sentCount = results.filter(r => r.status === 'sent').length
+    const alreadySentCount = results.filter(r => r.status === 'already_sent').length
+    const errorCount = results.filter(r => r.status === 'error').length
+
+    const now = new Date().toISOString()
+    for (const result of results) {
+      if (result.status === 'sent') {
+        const signup = data.value.find(s => Number(s.id) === result.id)
+        if (signup) signup.follow_up_sent_at = now
+      }
+    }
+
+    const parts: string[] = []
+    if (sentCount > 0) parts.push(`${sentCount} sent`)
+    if (alreadySentCount > 0) parts.push(`${alreadySentCount} already sent`)
+    if (errorCount > 0) parts.push(`${errorCount} failed`)
+
+    const errors = results.filter(r => r.status === 'error' && r.error).map(r => r.error)
+    const description = errors.length > 0
+      ? `${parts.join(', ')} — ${errors.join('; ')}`
+      : parts.join(', ')
+
+    toast.add({
+      title: 'Follow-up emails processed',
+      description,
+      color: errorCount > 0 ? 'warning' : 'success'
+    })
+
+    showFollowUpModal.value = false
+    rowSelection.value = {}
+  } catch (err: any) {
+    toast.add({
+      title: 'Error sending follow-ups',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+  } finally {
+    sendingFollowUps.value = false
+  }
+}
+
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -389,7 +500,19 @@ const columns: TableColumn<Signup>[] = [
   },
   {
     accessorKey: 'created_at',
-    header: 'Signed Up'
+    header: ({ column }) => {
+      const isSorted = column.getIsSorted()
+      return h(UButton, {
+        color: 'neutral',
+        variant: 'ghost',
+        label: 'Signed Up',
+        icon: isSorted
+          ? (isSorted === 'asc' ? 'i-lucide-arrow-up-narrow-wide' : 'i-lucide-arrow-down-wide-narrow')
+          : 'i-lucide-arrow-up-down',
+        class: '-mx-2.5',
+        onClick: () => column.toggleSorting(column.getIsSorted() === 'asc')
+      })
+    }
   },
 ]
 
@@ -492,6 +615,13 @@ const pagination = ref({
             color="primary"
             @click="openInviteModal"
           />
+          <UButton
+            v-if="selectedRows.length > 0 && viewTab === 'follow_up'"
+            :label="`Send Follow Up (${selectedRows.length})`"
+            icon="i-lucide-mail-warning"
+            color="warning"
+            @click="openFollowUpModal"
+          />
           <UDropdownMenu
             :items="
               table?.tableApi
@@ -527,6 +657,7 @@ const pagination = ref({
         v-model:column-visibility="columnVisibility"
         v-model:row-selection="rowSelection"
         v-model:pagination="pagination"
+        v-model:sorting="sorting"
         :pagination-options="{
           getPaginationRowModel: getPaginationRowModel()
         }"
@@ -719,6 +850,70 @@ const pagination = ref({
             color="primary"
             :loading="sendingInvites"
             @click="confirmSendInvites"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
+
+  <UModal v-model:open="showFollowUpModal" title="Preview Follow-Up Email" :ui="{ width: 'max-w-2xl' }">
+    <template #body>
+      <div class="space-y-4">
+        <!-- Recipients -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">To ({{ selectedRows.length }})</label>
+          <div class="flex flex-wrap gap-1.5">
+            <span
+              v-for="s in selectedRows.slice(0, 10)"
+              :key="s.id"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800 text-muted"
+            >
+              {{ s.first_name || s.email.split('@')[0] }} {{ s.last_name || '' }}
+            </span>
+            <span v-if="selectedRows.length > 10" class="text-xs text-muted self-center">
+              +{{ selectedRows.length - 10 }} more
+            </span>
+          </div>
+        </div>
+
+        <!-- Subject -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
+          <UInput v-model="followUpSubject" class="w-full" />
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Preview</label>
+          <div v-if="loadingFollowUpPreview" class="flex items-center justify-center py-12 rounded-lg border border-default bg-white">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div
+            v-else
+            ref="followUpPreviewRef"
+            contenteditable="true"
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96 focus:outline-none focus:ring-2 focus:ring-primary"
+            v-html="followUpPreviewHtml"
+          />
+          <p v-if="selectedRows.length > 1" class="text-xs text-muted mt-1">
+            Showing preview for {{ selectedRows[0]?.first_name || selectedRows[0]?.email }}. Name is personalized per recipient.
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="subtle"
+            @click="showFollowUpModal = false"
+          />
+          <UButton
+            :label="`Send to ${selectedRows.length} recipient${selectedRows.length > 1 ? 's' : ''}`"
+            icon="i-lucide-send"
+            color="warning"
+            :loading="sendingFollowUps"
+            @click="confirmSendFollowUps"
           />
         </div>
       </div>

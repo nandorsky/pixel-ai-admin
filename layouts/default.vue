@@ -32,6 +32,13 @@ const links = [[{
     open.value = false
   }
 }, {
+  label: 'Prompts',
+  icon: 'i-lucide-activity',
+  to: '/traces',
+  onSelect: () => {
+    open.value = false
+  }
+}, {
   label: 'Referrals',
   icon: 'i-lucide-share-2',
   to: '/referrals',
@@ -63,13 +70,6 @@ const links = [[{
   label: 'Network',
   icon: 'i-lucide-git-branch',
   to: '/network',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Prompts',
-  icon: 'i-lucide-activity',
-  to: '/traces',
   onSelect: () => {
     open.value = false
   }

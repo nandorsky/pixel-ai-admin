@@ -20,14 +20,14 @@ export default defineEventHandler(async (event) => {
     config.public.supabaseKey as string
   )
 
-  const template = body.htmlTemplate || buildInviteTemplate()
-  const subject = body.subject || `You're in — and you're starting with {{credits}} credits`
+  const template = body.htmlTemplate || buildFollowUpTemplate()
+  const subject = body.subject || 'Your Pixel invite expires soon'
   const results: { id: number; status: string; error?: string }[] = []
 
   for (const id of ids) {
     const { data: signup, error: fetchError } = await supabase
       .from('signups')
-      .select('id, email, first_name, invite_sent_at, referral_code')
+      .select('id, email, first_name, follow_up_sent_at')
       .eq('id', id)
       .single()
 
@@ -36,26 +36,13 @@ export default defineEventHandler(async (event) => {
       continue
     }
 
-    if (signup.invite_sent_at) {
+    if (signup.follow_up_sent_at) {
       results.push({ id, status: 'already_sent' })
       continue
     }
 
-    const firstName = signup.first_name || ''
-
-    const { count: referralCount } = await supabase
-      .from('signups')
-      .select('id', { count: 'exact', head: true })
-      .eq('referred_by', signup.referral_code)
-
-    const referrals = referralCount || 0
-    const earned = 500 + (referrals * 500)
-    const credits = Math.max(1750, earned)
-
-    const html = replaceInvitePlaceholders(template, {
-      firstName,
-      credits,
-      referralCount: referrals
+    const html = replaceFollowUpPlaceholders(template, {
+      firstName: signup.first_name || ''
     })
 
     try {
@@ -63,7 +50,7 @@ export default defineEventHandler(async (event) => {
         from: 'Pixel <notifications@notifications.getpixel.ai>',
         replyTo: 'support@getpixel.ai',
         to: signup.email,
-        subject: subject.replace('{{credits}}', credits.toLocaleString()),
+        subject,
         html
       })
 
@@ -79,14 +66,14 @@ export default defineEventHandler(async (event) => {
 
       const { data: updateData, error: updateError } = await supabase
         .from('signups')
-        .update({ invite_sent_at: new Date().toISOString() })
+        .update({ follow_up_sent_at: new Date().toISOString() })
         .eq('id', id)
         .select('id')
 
       if (updateError) {
         results.push({ id, status: 'error', error: `Email sent but failed to update record: ${updateError.message}` })
       } else if (!updateData || updateData.length === 0) {
-        results.push({ id, status: 'error', error: 'Email sent but invite_sent_at not updated (RLS may be blocking updates)' })
+        results.push({ id, status: 'error', error: 'Email sent but follow_up_sent_at not updated (RLS may be blocking updates)' })
       } else {
         results.push({ id, status: 'sent' })
       }

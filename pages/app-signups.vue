@@ -20,22 +20,19 @@ interface AppSignup {
   }
 }
 
-interface TraceEntry {
-  input: string
-  images: string[]
-  date: string
-}
-
 const data = ref<AppSignup[]>([])
 const isFetching = ref(true)
 const waitlistEmails = ref<Set<string>>(new Set())
 const waitlistByEmail = ref<Record<string, any>>({})
 const activeEmails = ref<Set<string>>(new Set())
-const tracesByEmail = ref<Record<string, TraceEntry[]>>({})
+const campaignEmails = ref<Set<string>>(new Set())
+const campaignTexts = ref<Record<string, string>>({})
+const rawTracesByEmail = ref<Record<string, any[]>>({})
 
 const showDetail = ref(false)
 const selectedEmail = ref('')
 const selectedName = ref('')
+const selectedTraceIndex = ref(0)
 
 const viewTab = ref('all')
 
@@ -124,48 +121,38 @@ function getTraceInput(trace: any): string {
   return human?.content || ''
 }
 
-function getTraceImages(trace: any): string[] {
-  if (!trace.output?.messages?.length) return []
-  const urls: string[] = []
-  const pngRegex = /https?:\/\/[^\s"']+\.png/gi
-  for (const msg of trace.output.messages) {
-    const content = msg.content || ''
-    const text = typeof content === 'string' ? content : JSON.stringify(content)
-    const matches = text.match(pngRegex)
-    if (matches) {
-      for (const url of matches) {
-        if (!urls.includes(url)) urls.push(url)
-      }
-    }
-  }
-  return urls
-}
-
 async function fetchActiveEmails() {
   try {
     const result = await $fetch<any>('/api/opik/traces', {
       params: { page: 1, size: 200 }
     })
     const emails = new Set<string>()
-    const byEmail: Record<string, TraceEntry[]> = {}
+    const campaigns = new Set<string>()
+    const texts: Record<string, string> = {}
+    const byEmail: Record<string, any[]> = {}
+    const campaignPattern = /launch|run|start|send|create/i
     for (const trace of (result.content || [])) {
       const email = trace.metadata?.user_email || trace.metadata?.user_meail
       if (email) {
         const key = email.toLowerCase()
         emails.add(key)
         if (!byEmail[key]) byEmail[key] = []
-        byEmail[key].push({
-          input: getTraceInput(trace),
-          images: getTraceImages(trace),
-          date: trace.start_time
-        })
+        byEmail[key].push(trace)
+        // Check if any input mentions launching a campaign
+        const input = trace.input?.messages?.find((m: any) => m.type === 'human')?.content || ''
+        if (campaignPattern.test(input) && /campaign/i.test(input)) {
+          campaigns.add(key)
+          if (!texts[key]) texts[key] = input
+        }
       }
     }
     activeEmails.value = emails
+    campaignEmails.value = campaigns
+    campaignTexts.value = texts
     for (const key in byEmail) {
       byEmail[key].reverse()
     }
-    tracesByEmail.value = byEmail
+    rawTracesByEmail.value = byEmail
   } catch {
     // Silently fail - not critical
   }
@@ -174,6 +161,7 @@ async function fetchActiveEmails() {
 function openUserTraces(email: string, name: string) {
   selectedEmail.value = email.toLowerCase()
   selectedName.value = name
+  selectedTraceIndex.value = 0
   showDetail.value = true
 }
 
@@ -251,15 +239,15 @@ const searchFilter = computed({
     </template>
 
     <template #body>
-      <div class="grid grid-cols-2 gap-px bg-default/50 rounded-lg mb-6 max-w-sm">
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Signups</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ data.length.toLocaleString() }}</p>
+      <div class="flex items-center gap-3 mb-4">
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
+          <span class="text-lg font-semibold text-highlighted ml-2">{{ data.length.toLocaleString() }}</span>
         </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Active</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ activeCount.toLocaleString() }}<span v-if="data.length" class="text-lg text-muted font-normal"> / {{ data.length.toLocaleString() }}</span></p>
-          <p v-if="data.length > 0" class="text-xs text-muted mt-1">{{ Math.round((activeCount / data.length) * 100) }}% activation</p>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Active</span>
+          <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
+          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / data.length) * 100) }}%)</span>
         </div>
       </div>
 
@@ -325,19 +313,7 @@ const searchFilter = computed({
             </div>
             <div class="min-w-0">
               <template v-if="waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]">
-                <button
-                  v-if="activeEmails.has(row.original.json_payload.email.toLowerCase())"
-                  class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate block text-left"
-                  @click.stop="openUserTraces(
-                    row.original.json_payload.email,
-                    `${waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || ''} ${waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name || ''}`.trim()
-                  )"
-                >
-                  {{ waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || '' }}
-                  {{ waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name || '' }}
-                </button>
                 <NuxtLink
-                  v-else
                   :to="`/signups/${waitlistByEmail[row.original.json_payload.email.toLowerCase()].id}`"
                   class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate block"
                 >
@@ -346,17 +322,20 @@ const searchFilter = computed({
                 </NuxtLink>
                 <div class="text-xs text-muted truncate">{{ row.original.json_payload.email }}</div>
               </template>
-              <template v-else>
-                <button
-                  v-if="activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
-                  class="text-sm text-blue-600 dark:text-blue-400 hover:underline text-left"
-                  @click.stop="openUserTraces(row.original.json_payload.email, '')"
-                >
-                  {{ row.original.json_payload?.email || '—' }}
-                </button>
-                <span v-else class="text-sm">{{ row.original.json_payload?.email || '—' }}</span>
-              </template>
+              <span v-else class="text-sm">{{ row.original.json_payload?.email || '—' }}</span>
             </div>
+            <button
+              v-if="activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
+              class="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+              @click.stop="openUserTraces(
+                row.original.json_payload.email,
+                waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]
+                  ? `${waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || ''} ${waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name || ''}`.trim()
+                  : ''
+              )"
+            >
+              View Prompts
+            </button>
             <span
               v-if="isOnWaitlist(row.original.json_payload?.email)"
               class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 shrink-0"
@@ -376,6 +355,14 @@ const searchFilter = computed({
             >
               <span class="size-1.5 rounded-full bg-violet-500 animate-pulse" />
               Active
+            </span>
+            <span
+              v-if="campaignEmails.has(row.original.json_payload?.email?.toLowerCase())"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 shrink-0 cursor-help"
+              :title="campaignTexts[row.original.json_payload?.email?.toLowerCase()]"
+            >
+              <UIcon name="i-lucide-rocket" class="size-3" />
+              Campaign
             </span>
           </div>
         </template>
@@ -421,51 +408,44 @@ const searchFilter = computed({
         </div>
         <div v-if="selectedName" class="text-xs text-muted">{{ selectedEmail }}</div>
         <div class="text-xs text-muted mt-0.5">
-          {{ tracesByEmail[selectedEmail]?.length || 0 }} prompt(s)
+          {{ rawTracesByEmail[selectedEmail]?.length || 0 }} prompt(s)
         </div>
       </div>
     </template>
 
     <template #body>
-      <div class="space-y-4">
-        <div
-          v-for="(trace, idx) in tracesByEmail[selectedEmail] || []"
-          :key="idx"
-          class="rounded-lg border border-default bg-elevated/50 overflow-hidden"
-        >
-          <!-- Prompt -->
-          <div class="px-4 py-3 border-b border-default">
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs text-muted">{{ timeAgo(trace.date) }}</span>
-              <span v-if="trace.images.length" class="inline-flex items-center gap-1 text-xs text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-                <UIcon name="i-lucide-image" class="size-3" />
-                {{ trace.images.length }}
-              </span>
-            </div>
-            <p class="text-sm text-highlighted leading-relaxed whitespace-pre-wrap">{{ trace.input || 'No input' }}</p>
-          </div>
-
-          <!-- Images -->
-          <div v-if="trace.images.length" class="grid grid-cols-4 gap-2 p-3">
-            <a
-              v-for="(url, imgIdx) in trace.images"
-              :key="imgIdx"
-              :href="url"
-              target="_blank"
-              class="block rounded-lg border border-default overflow-hidden hover:ring-2 hover:ring-primary/50 transition-shadow"
-            >
-              <img
-                :src="url"
-                :alt="`Creative ${imgIdx + 1}`"
-                class="w-full h-auto object-contain bg-neutral-50 dark:bg-neutral-900"
-              />
-            </a>
-          </div>
+      <div v-if="rawTracesByEmail[selectedEmail]?.length" class="space-y-4">
+        <!-- Prompt selector -->
+        <div v-if="rawTracesByEmail[selectedEmail].length > 1" class="flex items-center gap-2 flex-wrap">
+          <button
+            v-for="(trace, idx) in rawTracesByEmail[selectedEmail]"
+            :key="idx"
+            class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            :class="selectedTraceIndex === idx
+              ? 'bg-primary text-white'
+              : 'bg-elevated text-muted hover:text-default'"
+            @click="selectedTraceIndex = idx"
+          >
+            {{ timeAgo(trace.start_time) }}
+          </button>
         </div>
 
-        <div v-if="!tracesByEmail[selectedEmail]?.length" class="text-sm text-muted text-center py-8">
-          No prompts found for this user
+        <!-- Prompt input -->
+        <div class="rounded-lg border border-default bg-elevated/50 p-4">
+          <p class="text-xs font-medium text-muted mb-2">Prompt</p>
+          <p class="text-sm text-highlighted leading-relaxed whitespace-pre-wrap">{{ getTraceInput(rawTracesByEmail[selectedEmail][selectedTraceIndex]) || 'No input' }}</p>
         </div>
+
+        <!-- Trace detail component -->
+        <TraceDetail
+          :trace="rawTracesByEmail[selectedEmail][selectedTraceIndex]"
+          :tabs="['creative', 'conversation']"
+          default-tab="creative"
+        />
+      </div>
+
+      <div v-else class="text-sm text-muted text-center py-8">
+        No prompts found for this user
       </div>
     </template>
   </USlideover>

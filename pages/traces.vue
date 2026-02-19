@@ -14,15 +14,6 @@ interface Trace {
   error_info: { exception_type?: string; message?: string } | null
 }
 
-interface ParsedMessage {
-  type: 'human' | 'ai' | 'tool'
-  content: string
-  toolCalls?: { name: string; args: Record<string, any> }[]
-  toolName?: string
-  toolStatus?: string
-  model?: string
-}
-
 const supabase = useSupabase()
 const toast = useToast()
 
@@ -33,8 +24,6 @@ const isFetching = ref(true)
 const totalTraces = ref(0)
 const selectedTrace = ref<Trace | null>(null)
 const showDetail = ref(false)
-const detailTab = ref('creative')
-const expandedSteps = ref<Set<number>>(new Set())
 
 const page = ref(1)
 const pageSize = 50
@@ -115,8 +104,6 @@ watch(page, () => {
 
 function openDetail(trace: Trace) {
   selectedTrace.value = trace
-  detailTab.value = 'creative'
-  expandedSteps.value = new Set()
   showDetail.value = true
 }
 
@@ -128,63 +115,6 @@ function getInputText(trace: Trace): string {
   if (!trace.input?.messages?.length) return ''
   const human = trace.input.messages.find((m: any) => m.type === 'human')
   return human?.content || ''
-}
-
-function getOutputMessages(trace: Trace): ParsedMessage[] {
-  if (!trace.output?.messages?.length) return []
-  const messages: ParsedMessage[] = []
-
-  for (const msg of trace.output.messages) {
-    if (msg.type === 'human') {
-      messages.push({ type: 'human', content: msg.content })
-    } else if (msg.type === 'ai') {
-      let text = ''
-      const toolCalls: { name: string; args: Record<string, any> }[] = []
-
-      if (typeof msg.content === 'string') {
-        text = msg.content
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === 'text' && block.text) {
-            text += block.text + '\n'
-          }
-        }
-      }
-
-      if (msg.tool_calls?.length) {
-        for (const tc of msg.tool_calls) {
-          toolCalls.push({ name: tc.name, args: tc.args || {} })
-        }
-      }
-
-      messages.push({
-        type: 'ai',
-        content: text.trim(),
-        toolCalls: toolCalls.length ? toolCalls : undefined,
-        model: msg.response_metadata?.model_name
-      })
-    } else if (msg.type === 'tool') {
-      let content = msg.content || ''
-      if (content.length > 500) {
-        content = content.substring(0, 500) + '...'
-      }
-      messages.push({
-        type: 'tool',
-        content,
-        toolName: msg.name,
-        toolStatus: msg.status
-      })
-    }
-  }
-
-  return messages
-}
-
-function getCreativeContent(trace: Trace): string[] {
-  const messages = getOutputMessages(trace)
-  return messages
-    .filter(m => m.type === 'ai' && m.content)
-    .map(m => m.content)
 }
 
 function getImageUrls(trace: Trace): string[] {
@@ -237,12 +167,6 @@ function timeAgo(dateString: string): string {
 
 function getEmailInitial(email: string): string {
   return email.charAt(0).toUpperCase()
-}
-
-function formatJson(obj: any): string {
-  if (!obj) return '—'
-  if (typeof obj === 'string') return obj
-  return JSON.stringify(obj, null, 2)
 }
 
 const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
@@ -419,129 +343,7 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
           </div>
         </div>
 
-        <!-- Tabs -->
-        <div class="flex items-center gap-4 border-b border-default">
-          <button
-            v-for="tab in ['creative', 'conversation', 'metadata']"
-            :key="tab"
-            class="pb-2 text-sm font-medium border-b-2 transition-colors capitalize"
-            :class="detailTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
-            @click="detailTab = tab"
-          >
-            {{ tab }}
-          </button>
-        </div>
-
-        <!-- Creative view -->
-        <div v-if="detailTab === 'creative'" class="space-y-4">
-          <!-- Images -->
-          <div v-if="getImageUrls(selectedTrace).length" class="grid grid-cols-4 gap-3">
-            <a
-              v-for="(url, idx) in getImageUrls(selectedTrace)"
-              :key="idx"
-              :href="url"
-              target="_blank"
-              class="block rounded-lg border border-default overflow-hidden hover:ring-2 hover:ring-primary/50 transition-shadow"
-            >
-              <img
-                :src="url"
-                :alt="`Creative ${idx + 1}`"
-                class="w-full h-auto object-contain bg-neutral-50 dark:bg-neutral-900"
-              />
-            </a>
-          </div>
-
-          <div v-if="!getImageUrls(selectedTrace).length" class="text-sm text-muted text-center py-8">
-            No creative content in this trace
-          </div>
-        </div>
-
-        <!-- Conversation view -->
-        <div v-else-if="detailTab === 'conversation'" class="space-y-3">
-          <template v-for="(msg, idx) in getOutputMessages(selectedTrace)" :key="idx">
-            <!-- Human message -->
-            <div v-if="msg.type === 'human'" class="flex gap-3">
-              <div class="size-7 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center shrink-0 mt-0.5">
-                <UIcon name="i-lucide-user" class="size-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-medium text-muted mb-1">User</p>
-                <p class="text-sm text-highlighted whitespace-pre-wrap">{{ msg.content }}</p>
-              </div>
-            </div>
-
-            <!-- AI message -->
-            <div v-else-if="msg.type === 'ai'" class="flex gap-3">
-              <div class="size-7 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center shrink-0 mt-0.5">
-                <UIcon name="i-lucide-bot" class="size-4 text-green-600 dark:text-green-400" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-medium text-muted mb-1">
-                  AI
-                  <span v-if="msg.model" class="font-normal text-dimmed ml-1">{{ msg.model }}</span>
-                </p>
-                <p v-if="msg.content" class="text-sm text-highlighted whitespace-pre-wrap">{{ msg.content }}</p>
-                <!-- Tool calls as expandable -->
-                <div v-if="msg.toolCalls?.length" class="mt-2">
-                  <button
-                    class="flex items-center gap-1.5 text-xs text-muted hover:text-default transition-colors"
-                    @click.stop="expandedSteps.has(idx) ? expandedSteps.delete(idx) : expandedSteps.add(idx)"
-                  >
-                    <UIcon
-                      :name="expandedSteps.has(idx) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-                      class="size-3.5"
-                    />
-                    <span class="flex items-center gap-1.5">
-                      <UIcon name="i-lucide-wrench" class="size-3 text-amber-600 dark:text-amber-400" />
-                      {{ msg.toolCalls.map(tc => tc.name).join(', ') }}
-                    </span>
-                  </button>
-                  <div v-if="expandedSteps.has(idx)" class="mt-2 space-y-2">
-                    <div
-                      v-for="(tc, tcIdx) in msg.toolCalls"
-                      :key="tcIdx"
-                      class="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/50 p-2"
-                    >
-                      <p class="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">{{ tc.name }}</p>
-                      <pre class="text-xs text-muted whitespace-pre-wrap break-words max-h-40 overflow-auto">{{ JSON.stringify(tc.args, null, 2) }}</pre>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Tool response (expandable) -->
-            <div v-else-if="msg.type === 'tool'" class="pl-10">
-              <button
-                class="flex items-center gap-1.5 text-xs text-muted hover:text-default transition-colors"
-                @click.stop="expandedSteps.has(idx) ? expandedSteps.delete(idx) : expandedSteps.add(idx)"
-              >
-                <UIcon
-                  :name="expandedSteps.has(idx) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-                  class="size-3.5"
-                />
-                <UIcon
-                  :name="msg.toolStatus === 'error' ? 'i-lucide-x-circle' : 'i-lucide-check-circle'"
-                  :class="msg.toolStatus === 'error' ? 'size-3 text-red-500' : 'size-3 text-green-500'"
-                />
-                <span>{{ msg.toolName }} response</span>
-              </button>
-              <pre
-                v-if="expandedSteps.has(idx)"
-                class="mt-2 text-xs bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap break-words text-muted"
-              >{{ msg.content }}</pre>
-            </div>
-          </template>
-
-          <div v-if="getOutputMessages(selectedTrace).length === 0" class="text-sm text-muted text-center py-4">
-            No conversation data
-          </div>
-        </div>
-
-        <!-- Metadata view -->
-        <div v-else-if="detailTab === 'metadata'">
-          <pre class="text-xs bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap break-words">{{ formatJson(selectedTrace.metadata) }}</pre>
-        </div>
+        <TraceDetail :trace="selectedTrace" />
 
         <!-- Error info -->
         <div v-if="selectedTrace.error_info" class="p-3 bg-red-50 dark:bg-red-950 rounded-lg border border-red-200 dark:border-red-800">
