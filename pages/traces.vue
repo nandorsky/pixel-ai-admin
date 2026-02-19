@@ -89,7 +89,9 @@ async function fetchTraces() {
     const allTraces: Trace[] = result.content || []
     data.value = allTraces.filter(t => {
       const email = getUserEmail(t)
-      return !email || !testEmails.value.has(email.toLowerCase())
+      if (!email) return false
+      if (testEmails.value.has(email.toLowerCase())) return false
+      return true
     }).slice(0, pageSize)
     totalTraces.value = result.total || 0
   } catch (err: any) {
