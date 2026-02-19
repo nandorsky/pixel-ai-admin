@@ -278,14 +278,12 @@ const searchFilter = computed({
         >
           Active ({{ activeCount }})
         </button>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-1.5 mb-4">
         <UInput
           v-model="searchFilter"
-          class="max-w-sm"
+          class="max-w-48 ml-auto"
+          size="sm"
           icon="i-lucide-search"
-          placeholder="Search by email..."
+          placeholder="Search..."
         />
       </div>
 
