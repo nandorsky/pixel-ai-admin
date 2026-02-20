@@ -18,6 +18,7 @@ interface AppSignup {
     referralUrl: string | null
     referralCode: string | null
   }
+  linkedin_json: any | null
 }
 
 const data = ref<AppSignup[]>([])
@@ -25,14 +26,15 @@ const isFetching = ref(true)
 const waitlistEmails = ref<Set<string>>(new Set())
 const waitlistByEmail = ref<Record<string, any>>({})
 const activeEmails = ref<Set<string>>(new Set())
-const campaignEmails = ref<Set<string>>(new Set())
-const campaignTexts = ref<Record<string, string>>({})
 const rawTracesByEmail = ref<Record<string, any[]>>({})
 
 const showDetail = ref(false)
 const selectedEmail = ref('')
 const selectedName = ref('')
 const selectedTraceIndex = ref(0)
+
+const showProfile = ref(false)
+const profileData = ref<any>(null)
 
 const viewTab = ref('all')
 
@@ -52,7 +54,7 @@ async function fetchAppSignups() {
   const [signupsResult, waitlistResult, testUsersResult] = await Promise.all([
     supabase
       .from('app_signups')
-      .select('id, created_at, json_payload')
+      .select('id, created_at, json_payload, linkedin_json')
       .order('created_at', { ascending: false }),
     supabase
       .from('signups')
@@ -75,7 +77,7 @@ async function fetchAppSignups() {
   } else {
     data.value = (signupsResult.data || []).filter(s => {
       const email = s.json_payload?.email?.toLowerCase()
-      return !email || !suppressedEmails.has(email)
+      return !email || (!suppressedEmails.has(email) && !email.endsWith('@metadata.io'))
     })
   }
 
@@ -103,16 +105,31 @@ function getWaitlistSource(email: string): string | null {
   return getSignupSource(signup)
 }
 
-function getWaitlistPhoto(email: string): string | null {
-  const signup = waitlistByEmail.value[email?.toLowerCase()]
-  if (!signup?.linkedin_json) return null
-  const lj = signup.linkedin_json
+function getLinkedInPhoto(lj: any): string | null {
+  if (!lj) return null
   if (lj.profilePicture) return lj.profilePicture
   if (lj.profilePictures?.length) {
     const preferred = lj.profilePictures.find((p: any) => p.width === 200) || lj.profilePictures[0]
     return preferred?.url || null
   }
   return null
+}
+
+function getLinkedInName(lj: any): string | null {
+  if (!lj) return null
+  return [lj.firstName, lj.lastName].filter(Boolean).join(' ') || null
+}
+
+function getPhoto(row: any): string | null {
+  return getLinkedInPhoto(row.linkedin_json)
+}
+
+function getName(row: any): string | null {
+  return getLinkedInName(row.linkedin_json)
+}
+
+function getHeadline(row: any): string | null {
+  return row.linkedin_json?.headline || null
 }
 
 function getTraceInput(trace: any): string {
@@ -127,10 +144,7 @@ async function fetchActiveEmails() {
       params: { page: 1, size: 200 }
     })
     const emails = new Set<string>()
-    const campaigns = new Set<string>()
-    const texts: Record<string, string> = {}
     const byEmail: Record<string, any[]> = {}
-    const campaignPattern = /launch|run|start|send|create/i
     for (const trace of (result.content || [])) {
       const email = trace.metadata?.user_email || trace.metadata?.user_meail
       if (email) {
@@ -138,17 +152,9 @@ async function fetchActiveEmails() {
         emails.add(key)
         if (!byEmail[key]) byEmail[key] = []
         byEmail[key].push(trace)
-        // Check if any input mentions launching a campaign
-        const input = trace.input?.messages?.find((m: any) => m.type === 'human')?.content || ''
-        if (campaignPattern.test(input) && /campaign/i.test(input)) {
-          campaigns.add(key)
-          if (!texts[key]) texts[key] = input
-        }
       }
     }
     activeEmails.value = emails
-    campaignEmails.value = campaigns
-    campaignTexts.value = texts
     for (const key in byEmail) {
       byEmail[key].reverse()
     }
@@ -163,6 +169,51 @@ function openUserTraces(email: string, name: string) {
   selectedName.value = name
   selectedTraceIndex.value = 0
   showDetail.value = true
+}
+
+function openProfile(row: any) {
+  profileData.value = row
+  showProfile.value = true
+}
+
+function getProfilePhoto(lj: any): string | null {
+  if (!lj) return null
+  if (lj.profilePicture) return lj.profilePicture
+  if (lj.profilePictures?.length) {
+    const preferred = lj.profilePictures.find((p: any) => p.width === 400)
+      || lj.profilePictures[lj.profilePictures.length - 1]
+    return preferred?.url || null
+  }
+  return null
+}
+
+function getProfileName(lj: any): string {
+  if (!lj) return 'Unknown'
+  return [lj.firstName, lj.lastName].filter(Boolean).join(' ') || 'Unknown'
+}
+
+function getProfileUrl(lj: any): string | null {
+  if (!lj?.username) return null
+  return `https://www.linkedin.com/in/${lj.username}`
+}
+
+function getCurrentPosition(lj: any) {
+  if (!lj?.position?.length) return null
+  return lj.position.find((p: any) => !p.end?.year) || lj.position[0]
+}
+
+function getTopSkills(lj: any) {
+  if (!lj?.skills?.length) return []
+  return [...lj.skills]
+    .sort((a: any, b: any) => (b.endorsementsCount || 0) - (a.endorsementsCount || 0))
+    .slice(0, 12)
+}
+
+function formatPositionDate(date: { year?: number; month?: number } | undefined): string {
+  if (!date?.year) return 'Present'
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  if (date.month) return `${months[date.month - 1]} ${date.year}`
+  return `${date.year}`
 }
 
 function timeAgo(dateString: string): string {
@@ -296,74 +347,88 @@ const searchFilter = computed({
         }"
       >
         <template #email-cell="{ row }">
-          <div class="flex items-center gap-2">
-            <template v-if="waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]">
-              <img
-                v-if="getWaitlistPhoto(row.original.json_payload.email)"
-                :src="getWaitlistPhoto(row.original.json_payload.email)!"
-                :alt="waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || ''"
-                class="w-8 h-8 rounded-full object-cover shrink-0"
-              />
-              <div v-else class="w-8 h-8 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
-                {{ [waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name, waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name].filter(Boolean).map((n: string) => n.charAt(0)).join('').toUpperCase() || row.original.json_payload.email.charAt(0).toUpperCase() }}
+          <div class="flex items-start gap-3">
+            <!-- Avatar -->
+            <img
+              v-if="getPhoto(row.original)"
+              :src="getPhoto(row.original)!"
+              :alt="getName(row.original) || ''"
+              class="w-9 h-9 rounded-full object-cover shrink-0 mt-0.5"
+            />
+            <div v-else class="w-9 h-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0 mt-0.5">
+              {{ getName(row.original)?.charAt(0)?.toUpperCase() || (row.original.json_payload?.email || '?').charAt(0).toUpperCase() }}
+            </div>
+
+            <!-- Info -->
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span v-if="getName(row.original)" class="font-medium truncate">{{ getName(row.original) }}</span>
+                <span v-else class="text-sm truncate">{{ row.original.json_payload?.email || '—' }}</span>
+
+                <!-- Tags -->
+                <div class="flex items-center gap-1 shrink-0">
+                  <span
+                    v-if="isOnWaitlist(row.original.json_payload?.email)"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                  >
+                    Waitlist
+                  </span>
+                  <span
+                    v-if="getWaitlistSource(row.original.json_payload?.email)"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white"
+                    :style="{ backgroundColor: getSourceColor(getWaitlistSource(row.original.json_payload?.email)!) }"
+                  >
+                    {{ getWaitlistSource(row.original.json_payload?.email) }}
+                  </span>
+                  <span
+                    v-if="activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200"
+                  >
+                    <span class="size-1.5 rounded-full bg-violet-500 animate-pulse" />
+                    Active
+                  </span>
+                </div>
               </div>
-            </template>
-            <div v-else class="w-8 h-8 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
-              {{ (row.original.json_payload?.email || '?').charAt(0).toUpperCase() }}
-            </div>
-            <div class="min-w-0">
-              <template v-if="waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]">
-                <NuxtLink
-                  :to="`/signups/${waitlistByEmail[row.original.json_payload.email.toLowerCase()].id}`"
-                  class="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate block"
+
+              <!-- Email + headline -->
+              <div v-if="getName(row.original)" class="text-xs text-muted truncate">
+                {{ row.original.json_payload?.email }}
+              </div>
+              <div
+                v-if="getHeadline(row.original)"
+                class="text-xs text-muted truncate max-w-[300px]"
+                :title="getHeadline(row.original)!"
+              >
+                {{ getHeadline(row.original) }}
+              </div>
+
+              <!-- Action links -->
+              <div class="flex items-center gap-3 mt-1">
+                <button
+                  class="text-xs"
+                  :class="row.original.linkedin_json
+                    ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
+                    : 'text-muted/50 cursor-default'"
+                  :disabled="!row.original.linkedin_json"
+                  @click.stop="row.original.linkedin_json && openProfile(row.original)"
                 >
-                  {{ waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || '' }}
-                  {{ waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name || '' }}
-                </NuxtLink>
-                <div class="text-xs text-muted truncate">{{ row.original.json_payload.email }}</div>
-              </template>
-              <span v-else class="text-sm">{{ row.original.json_payload?.email || '—' }}</span>
+                  View Profile
+                </button>
+                <button
+                  class="text-xs"
+                  :class="activeEmails.has(row.original.json_payload?.email?.toLowerCase())
+                    ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
+                    : 'text-muted/50 cursor-default'"
+                  :disabled="!activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
+                  @click.stop="activeEmails.has(row.original.json_payload?.email?.toLowerCase()) && openUserTraces(
+                    row.original.json_payload.email,
+                    getName(row.original) || ''
+                  )"
+                >
+                  View Conversation
+                </button>
+              </div>
             </div>
-            <button
-              v-if="activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
-              class="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0"
-              @click.stop="openUserTraces(
-                row.original.json_payload.email,
-                waitlistByEmail[row.original.json_payload?.email?.toLowerCase()]
-                  ? `${waitlistByEmail[row.original.json_payload.email.toLowerCase()].first_name || ''} ${waitlistByEmail[row.original.json_payload.email.toLowerCase()].last_name || ''}`.trim()
-                  : ''
-              )"
-            >
-              View Prompts
-            </button>
-            <span
-              v-if="isOnWaitlist(row.original.json_payload?.email)"
-              class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 shrink-0"
-            >
-              Waitlist
-            </span>
-            <span
-              v-if="getWaitlistSource(row.original.json_payload?.email)"
-              class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white shrink-0"
-              :style="{ backgroundColor: getSourceColor(getWaitlistSource(row.original.json_payload?.email)!) }"
-            >
-              {{ getWaitlistSource(row.original.json_payload?.email) }}
-            </span>
-            <span
-              v-if="activeEmails.has(row.original.json_payload?.email?.toLowerCase())"
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200 shrink-0"
-            >
-              <span class="size-1.5 rounded-full bg-violet-500 animate-pulse" />
-              Active
-            </span>
-            <span
-              v-if="campaignEmails.has(row.original.json_payload?.email?.toLowerCase())"
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 shrink-0 cursor-help"
-              :title="campaignTexts[row.original.json_payload?.email?.toLowerCase()]"
-            >
-              <UIcon name="i-lucide-rocket" class="size-3" />
-              Campaign
-            </span>
           </div>
         </template>
 
@@ -402,13 +467,24 @@ const searchFilter = computed({
   <!-- User Prompts Slideover -->
   <USlideover v-model:open="showDetail" :ui="{ content: 'max-w-[56rem]' }">
     <template #header>
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-highlighted">
-          {{ selectedName || selectedEmail }}
+      <div class="flex items-center gap-3 flex-1 min-w-0">
+        <img
+          v-if="getLinkedInPhoto(data.find(d => d.json_payload?.email?.toLowerCase() === selectedEmail)?.linkedin_json)"
+          :src="getLinkedInPhoto(data.find(d => d.json_payload?.email?.toLowerCase() === selectedEmail)?.linkedin_json)!"
+          :alt="selectedName || selectedEmail"
+          class="w-9 h-9 rounded-full object-cover shrink-0"
+        />
+        <div v-else class="w-9 h-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+          {{ (selectedName || selectedEmail || '?').charAt(0).toUpperCase() }}
         </div>
-        <div v-if="selectedName" class="text-xs text-muted">{{ selectedEmail }}</div>
-        <div class="text-xs text-muted mt-0.5">
-          {{ rawTracesByEmail[selectedEmail]?.length || 0 }} prompt(s)
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-highlighted">
+            {{ selectedName || selectedEmail }}
+          </div>
+          <div v-if="selectedName" class="text-xs text-muted">{{ selectedEmail }}</div>
+          <div class="text-xs text-muted mt-0.5">
+            {{ rawTracesByEmail[selectedEmail]?.length || 0 }} prompt(s)
+          </div>
         </div>
       </div>
     </template>
@@ -446,6 +522,169 @@ const searchFilter = computed({
 
       <div v-else class="text-sm text-muted text-center py-8">
         No prompts found for this user
+      </div>
+    </template>
+  </USlideover>
+
+  <!-- Profile Slideover -->
+  <USlideover v-model:open="showProfile" :ui="{ content: 'max-w-[40rem]' }">
+    <template #header>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-highlighted">
+          {{ getProfileName(profileData?.linkedin_json) }}
+        </div>
+        <div class="text-xs text-muted">{{ profileData?.json_payload?.email }}</div>
+      </div>
+    </template>
+
+    <template #body>
+      <div v-if="profileData?.linkedin_json" class="space-y-6">
+        <!-- Profile Header -->
+        <div class="flex gap-4">
+          <img
+            v-if="getProfilePhoto(profileData.linkedin_json)"
+            :src="getProfilePhoto(profileData.linkedin_json)!"
+            :alt="getProfileName(profileData.linkedin_json)"
+            class="w-20 h-20 rounded-full object-cover shrink-0"
+          />
+          <div v-else class="w-20 h-20 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xl font-medium text-muted shrink-0">
+            {{ getProfileName(profileData.linkedin_json).charAt(0).toUpperCase() }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 class="text-lg font-semibold">{{ getProfileName(profileData.linkedin_json) }}</h2>
+              <span v-if="profileData.linkedin_json.isPremium" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                Premium
+              </span>
+              <span v-if="profileData.linkedin_json.isCreator" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                Creator
+              </span>
+            </div>
+            <p v-if="profileData.linkedin_json.headline" class="text-sm text-muted mt-1">
+              {{ profileData.linkedin_json.headline }}
+            </p>
+            <p v-if="profileData.linkedin_json.geo?.full" class="text-xs text-muted mt-1">
+              {{ profileData.linkedin_json.geo.full }}
+            </p>
+            <div class="flex items-center gap-4 mt-2">
+              <div v-if="getCurrentPosition(profileData.linkedin_json)" class="flex items-center gap-2">
+                <img
+                  v-if="getCurrentPosition(profileData.linkedin_json).companyLogo"
+                  :src="getCurrentPosition(profileData.linkedin_json).companyLogo"
+                  :alt="getCurrentPosition(profileData.linkedin_json).companyName"
+                  class="w-6 h-6 rounded object-cover"
+                />
+                <div>
+                  <p class="text-xs font-medium">{{ getCurrentPosition(profileData.linkedin_json).title }}</p>
+                  <p class="text-xs text-muted">{{ getCurrentPosition(profileData.linkedin_json).companyName }}</p>
+                </div>
+              </div>
+              <a
+                v-if="getProfileUrl(profileData.linkedin_json)"
+                :href="getProfileUrl(profileData.linkedin_json)!"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                View LinkedIn
+                <UIcon name="i-lucide-external-link" class="w-3 h-3" />
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- About -->
+        <div v-if="profileData.linkedin_json.summary" class="rounded-lg border border-default p-4">
+          <h3 class="text-sm font-semibold mb-2">About</h3>
+          <p class="whitespace-pre-wrap text-sm">{{ profileData.linkedin_json.summary }}</p>
+        </div>
+
+        <!-- Skills -->
+        <div v-if="getTopSkills(profileData.linkedin_json).length" class="rounded-lg border border-default p-4">
+          <h3 class="text-sm font-semibold mb-2">Top Skills</h3>
+          <div class="flex flex-wrap gap-2">
+            <span
+              v-for="skill in getTopSkills(profileData.linkedin_json)"
+              :key="skill.name"
+              class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800"
+            >
+              {{ skill.name }}
+              <span v-if="skill.endorsementsCount" class="text-muted">({{ skill.endorsementsCount }})</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Experience -->
+        <div v-if="profileData.linkedin_json.position?.length" class="rounded-lg border border-default p-4">
+          <h3 class="text-sm font-semibold mb-3">Experience</h3>
+          <div class="space-y-4">
+            <div v-for="(position, index) in profileData.linkedin_json.position" :key="index" class="flex gap-3">
+              <img
+                v-if="position.companyLogo"
+                :src="position.companyLogo"
+                :alt="position.companyName"
+                class="w-10 h-10 rounded object-cover shrink-0"
+              />
+              <div v-else class="w-10 h-10 rounded bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+                {{ position.companyName?.charAt(0) || '?' }}
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium">{{ position.title }}</p>
+                <p class="text-xs text-muted">{{ position.companyName }}</p>
+                <p class="text-xs text-muted mt-0.5">
+                  {{ formatPositionDate(position.start) }} — {{ formatPositionDate(position.end) }}
+                  <span v-if="position.location"> · {{ position.location }}</span>
+                </p>
+                <p v-if="position.description" class="text-xs mt-1.5 whitespace-pre-wrap">{{ position.description }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Education -->
+        <div v-if="profileData.linkedin_json.educations?.length" class="rounded-lg border border-default p-4">
+          <h3 class="text-sm font-semibold mb-3">Education</h3>
+          <div class="space-y-4">
+            <div v-for="(edu, index) in profileData.linkedin_json.educations" :key="index" class="flex gap-3">
+              <img
+                v-if="edu.logo?.[0]?.url"
+                :src="edu.logo[0].url"
+                :alt="edu.schoolName"
+                class="w-10 h-10 rounded object-cover shrink-0"
+              />
+              <div v-else class="w-10 h-10 rounded bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted shrink-0">
+                {{ edu.schoolName?.charAt(0) || '?' }}
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium">{{ edu.schoolName }}</p>
+                <p v-if="edu.degree || edu.fieldOfStudy" class="text-xs text-muted">
+                  {{ [edu.degree, edu.fieldOfStudy].filter(Boolean).join(' · ') }}
+                </p>
+                <p v-if="edu.start?.year || edu.end?.year" class="text-xs text-muted mt-0.5">
+                  {{ edu.start?.year || '' }}{{ edu.start?.year && edu.end?.year ? ' — ' : '' }}{{ edu.end?.year || '' }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Languages -->
+        <div v-if="profileData.linkedin_json.languages?.length" class="rounded-lg border border-default p-4">
+          <h3 class="text-sm font-semibold mb-2">Languages</h3>
+          <div class="flex flex-wrap gap-2">
+            <span
+              v-for="lang in profileData.linkedin_json.languages"
+              :key="lang.name"
+              class="inline-flex items-center px-3 py-1 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800"
+            >
+              {{ lang.name }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="text-sm text-muted text-center py-8">
+        No profile data available
       </div>
     </template>
   </USlideover>

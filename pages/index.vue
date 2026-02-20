@@ -69,21 +69,28 @@ const todaySignups = computed(() => {
 })
 
 onMounted(async () => {
-  const [signupsResult, appSignupsResult] = await Promise.all([
+  const [signupsResult, appSignupsResult, testUsersResult] = await Promise.all([
     supabase
       .from('signups')
       .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters, linkedin_json, product_access, invite_sent_at')
       .order('created_at', { ascending: true }),
     supabase
       .from('app_signups')
-      .select('created_at, json_payload')
+      .select('created_at, json_payload'),
+    supabase
+      .from('test_users')
+      .select('email')
   ])
+
+  const suppressedEmails = new Set(
+    (testUsersResult.data || []).map((r: any) => r.email?.toLowerCase()).filter(Boolean)
+  )
 
   if (!signupsResult.error && signupsResult.data) {
     signups.value = signupsResult.data
   }
   appSignupsRaw.value = (appSignupsResult.data || [])
-    .filter((r: any) => r.json_payload?.email)
+    .filter((r: any) => r.json_payload?.email && !suppressedEmails.has(r.json_payload.email.toLowerCase()) && !r.json_payload.email.toLowerCase().endsWith('@metadata.io'))
     .map((r: any) => ({ email: r.json_payload.email, created_at: r.created_at }))
   loading.value = false
 })

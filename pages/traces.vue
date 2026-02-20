@@ -20,6 +20,7 @@ const toast = useToast()
 const data = ref<Trace[]>([])
 const testEmails = ref<Set<string>>(new Set())
 const waitlistByEmail = ref<Record<string, any>>({})
+const appSignupByEmail = ref<Record<string, any>>({})
 const isFetching = ref(true)
 const totalTraces = ref(0)
 const selectedTrace = ref<Trace | null>(null)
@@ -48,11 +49,20 @@ async function fetchWaitlistUsers() {
   waitlistByEmail.value = map
 }
 
-function getWaitlistPhoto(email: string | null): string | null {
-  if (!email) return null
-  const signup = waitlistByEmail.value[email.toLowerCase()]
-  if (!signup?.linkedin_json) return null
-  const lj = signup.linkedin_json
+async function fetchAppSignups() {
+  const { data: rows } = await supabase
+    .from('app_signups')
+    .select('json_payload, linkedin_json')
+  const map: Record<string, any> = {}
+  for (const r of (rows || [])) {
+    const email = r.json_payload?.email
+    if (email) map[email.toLowerCase()] = r
+  }
+  appSignupByEmail.value = map
+}
+
+function getLinkedInPhoto(lj: any): string | null {
+  if (!lj) return null
   if (lj.profilePicture) return lj.profilePicture
   if (lj.profilePictures?.length) {
     const preferred = lj.profilePictures.find((p: any) => p.width === 200) || lj.profilePictures[0]
@@ -61,9 +71,29 @@ function getWaitlistPhoto(email: string | null): string | null {
   return null
 }
 
-function getWaitlistName(email: string | null): string | null {
+function getUserPhoto(email: string | null): string | null {
   if (!email) return null
-  const signup = waitlistByEmail.value[email.toLowerCase()]
+  const key = email.toLowerCase()
+  // Prefer app_signup linkedin_json, fall back to waitlist
+  const appSignup = appSignupByEmail.value[key]
+  if (appSignup?.linkedin_json) {
+    const photo = getLinkedInPhoto(appSignup.linkedin_json)
+    if (photo) return photo
+  }
+  const signup = waitlistByEmail.value[key]
+  return getLinkedInPhoto(signup?.linkedin_json)
+}
+
+function getUserName(email: string | null): string | null {
+  if (!email) return null
+  const key = email.toLowerCase()
+  // Prefer app_signup linkedin_json, fall back to waitlist
+  const appSignup = appSignupByEmail.value[key]
+  if (appSignup?.linkedin_json) {
+    const name = [appSignup.linkedin_json.firstName, appSignup.linkedin_json.lastName].filter(Boolean).join(' ')
+    if (name) return name
+  }
+  const signup = waitlistByEmail.value[key]
   if (!signup) return null
   return [signup.first_name, signup.last_name].filter(Boolean).join(' ') || null
 }
@@ -94,7 +124,7 @@ async function fetchTraces() {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchTestEmails(), fetchWaitlistUsers()])
+  await Promise.all([fetchTestEmails(), fetchWaitlistUsers(), fetchAppSignups()])
   fetchTraces()
 })
 
@@ -204,9 +234,9 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
           <!-- Timeline line -->
           <div class="flex flex-col items-center">
             <img
-              v-if="getWaitlistPhoto(getUserEmail(trace))"
-              :src="getWaitlistPhoto(getUserEmail(trace))!"
-              :alt="getWaitlistName(getUserEmail(trace)) || ''"
+              v-if="getUserPhoto(getUserEmail(trace))"
+              :src="getUserPhoto(getUserEmail(trace))!"
+              :alt="getUserName(getUserEmail(trace)) || ''"
               class="size-9 rounded-full object-cover shrink-0 ring-2 ring-offset-2 ring-offset-[var(--ui-bg)] ring-primary/30"
             />
             <div
@@ -229,9 +259,9 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
             <!-- Header: email + timestamp -->
             <div class="flex items-center gap-2 mb-1.5">
               <span class="text-sm font-medium text-highlighted truncate">
-                {{ getWaitlistName(getUserEmail(trace)) || getUserEmail(trace) || 'Unknown user' }}
+                {{ getUserName(getUserEmail(trace)) || getUserEmail(trace) || 'Unknown user' }}
               </span>
-              <span v-if="getWaitlistName(getUserEmail(trace)) && getUserEmail(trace)" class="text-xs text-muted truncate hidden sm:inline">
+              <span v-if="getUserName(getUserEmail(trace)) && getUserEmail(trace)" class="text-xs text-muted truncate hidden sm:inline">
                 {{ getUserEmail(trace) }}
               </span>
               <span

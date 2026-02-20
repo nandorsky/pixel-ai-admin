@@ -144,12 +144,21 @@ const templateOptions = computed(() => [
   ...replyTemplates.value.map(t => ({ label: t.name, value: String(t.id) }))
 ])
 
+const localTemplates: ReplyTemplate[] = [
+  {
+    id: -1,
+    name: 'Why not?',
+    body: "Appreciate the response.\n\nIf you don't mind me asking, curious why not?\n\nI thought this would be a no brainer, but I think I am missing something?"
+  }
+]
+
 async function fetchReplyTemplates() {
   try {
     const response = await $fetch('/api/email-bison/reply-templates')
-    replyTemplates.value = (response as any)?.data || response || []
+    replyTemplates.value = [...((response as any)?.data || response || []), ...localTemplates]
   } catch (error: any) {
     console.error('Failed to fetch reply templates:', error)
+    replyTemplates.value = [...localTemplates]
   }
 }
 
