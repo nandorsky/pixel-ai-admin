@@ -27,6 +27,7 @@ const waitlistEmails = ref<Set<string>>(new Set())
 const waitlistByEmail = ref<Record<string, any>>({})
 const activeEmails = ref<Set<string>>(new Set())
 const rawTracesByEmail = ref<Record<string, any[]>>({})
+const isLoadingActive = ref(true)
 
 const showDetail = ref(false)
 const selectedEmail = ref('')
@@ -139,21 +140,31 @@ function getTraceInput(trace: any): string {
 }
 
 async function fetchActiveEmails() {
+  isLoadingActive.value = true
   try {
-    const result = await $fetch<any>('/api/opik/traces', {
-      params: { page: 1, size: 200 }
-    })
     const emails = new Set<string>()
     const byEmail: Record<string, any[]> = {}
-    for (const trace of (result.content || [])) {
-      const email = trace.metadata?.user_email || trace.metadata?.user_meail
-      if (email) {
-        const key = email.toLowerCase()
-        emails.add(key)
-        if (!byEmail[key]) byEmail[key] = []
-        byEmail[key].push(trace)
+    let page = 1
+    const size = 200
+    let total = 0
+
+    do {
+      const result = await $fetch<any>('/api/opik/traces', {
+        params: { page, size }
+      })
+      total = result.total || 0
+      for (const trace of (result.content || [])) {
+        const email = trace.metadata?.user_email || trace.metadata?.user_meail
+        if (email) {
+          const key = email.toLowerCase()
+          emails.add(key)
+          if (!byEmail[key]) byEmail[key] = []
+          byEmail[key].push(trace)
+        }
       }
-    }
+      page++
+    } while ((page - 1) * size < total)
+
     activeEmails.value = emails
     for (const key in byEmail) {
       byEmail[key].reverse()
@@ -162,6 +173,7 @@ async function fetchActiveEmails() {
   } catch {
     // Silently fail - not critical
   }
+  isLoadingActive.value = false
 }
 
 function openUserTraces(email: string, name: string) {
@@ -297,8 +309,11 @@ const searchFilter = computed({
         </div>
         <div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Active</span>
-          <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
-          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / data.length) * 100) }}%)</span>
+          <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <template v-else>
+            <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
+            <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / data.length) * 100) }}%)</span>
+          </template>
         </div>
       </div>
 
@@ -315,7 +330,7 @@ const searchFilter = computed({
           :class="viewTab === 'active' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
           @click="viewTab = 'active'"
         >
-          Active ({{ activeCount }})
+          Active <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ activeCount }})</template>
         </button>
         <UInput
           v-model="searchFilter"

@@ -290,8 +290,8 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
         </div>
         <div class="bg-elevated p-6">
           <p class="text-xs text-muted uppercase tracking-wide">App Signups</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ appSignupsTotal.toLocaleString() }}<span class="text-lg text-muted font-normal"> / {{ invitesSent.toLocaleString() }}</span></p>
-          <p v-if="invitesSent > 0" class="text-xs text-muted mt-1">{{ Math.round((appSignupsTotal / invitesSent) * 100) }}% conversion</p>
+          <p class="text-3xl font-semibold text-highlighted mt-1">{{ appSignupsFromWaitlist.toLocaleString() }}<span class="text-lg text-muted font-normal"> / {{ invitesSent.toLocaleString() }}</span></p>
+          <p v-if="invitesSent > 0" class="text-xs text-muted mt-1">{{ Math.round((appSignupsFromWaitlist / invitesSent) * 100) }}% conversion</p>
         </div>
         <div class="bg-elevated p-6">
           <p class="text-xs text-muted uppercase tracking-wide">Referrers</p>
