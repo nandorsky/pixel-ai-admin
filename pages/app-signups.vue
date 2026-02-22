@@ -246,6 +246,14 @@ const activeCount = computed(() => {
   return data.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase())).length
 })
 
+const waitlistCount = computed(() => {
+  return data.value.filter(s => isOnWaitlist(s.json_payload?.email)).length
+})
+
+const nonWaitlistCount = computed(() => {
+  return data.value.length - waitlistCount.value
+})
+
 const filteredData = computed(() => {
   if (viewTab.value === 'active') {
     return data.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase()))
@@ -306,6 +314,16 @@ const searchFilter = computed({
         <div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
           <span class="text-lg font-semibold text-highlighted ml-2">{{ data.length.toLocaleString() }}</span>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">From Waitlist</span>
+          <span class="text-lg font-semibold text-highlighted ml-2">{{ waitlistCount.toLocaleString() }}</span>
+          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((waitlistCount / data.length) * 100) }}%)</span>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Not Waitlist</span>
+          <span class="text-lg font-semibold text-highlighted ml-2">{{ nonWaitlistCount.toLocaleString() }}</span>
+          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((nonWaitlistCount / data.length) * 100) }}%)</span>
         </div>
         <div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Active</span>
