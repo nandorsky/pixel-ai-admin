@@ -4,7 +4,7 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const supabase = createClient(
     config.public.supabaseUrl as string,
-    config.public.supabaseKey as string
+    config.supabaseServiceRoleKey as string
   )
 
   const { data: signups, error } = await supabase

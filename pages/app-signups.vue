@@ -28,6 +28,8 @@ const waitlistByEmail = ref<Record<string, any>>({})
 const activeEmails = ref<Set<string>>(new Set())
 const rawTracesByEmail = ref<Record<string, any[]>>({})
 const isLoadingActive = ref(true)
+const stripeSpend = ref<Record<string, number>>({})
+const isLoadingStripe = ref(true)
 
 const showDetail = ref(false)
 const selectedEmail = ref('')
@@ -254,16 +256,35 @@ const nonWaitlistCount = computed(() => {
   return data.value.length - waitlistCount.value
 })
 
+const payingCount = computed(() => {
+  return data.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()]).length
+})
+
 const filteredData = computed(() => {
   if (viewTab.value === 'active') {
     return data.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase()))
   }
+  if (viewTab.value === 'paying') {
+    return data.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()])
+  }
   return data.value
 })
+
+async function fetchStripeSpend() {
+  isLoadingStripe.value = true
+  try {
+    const result = await $fetch<any>('/api/stripe/spend-by-email')
+    stripeSpend.value = result.spendByEmail || {}
+  } catch {
+    // Silently fail - not critical
+  }
+  isLoadingStripe.value = false
+}
 
 onMounted(() => {
   fetchAppSignups()
   fetchActiveEmails()
+  fetchStripeSpend()
 })
 
 function formatDate(dateString: string) {
@@ -349,6 +370,13 @@ const searchFilter = computed({
           @click="viewTab = 'active'"
         >
           Active <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ activeCount }})</template>
+        </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'paying' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'paying'"
+        >
+          Paying <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ payingCount }})</template>
         </button>
         <UInput
           v-model="searchFilter"
@@ -447,7 +475,12 @@ const searchFilter = computed({
                 >
                   View Profile
                 </button>
+                <span v-if="isLoadingActive" class="text-xs text-muted/50">
+                  <UIcon name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle mr-0.5" />
+                  View Conversation
+                </span>
                 <button
+                  v-else
                   class="text-xs"
                   :class="activeEmails.has(row.original.json_payload?.email?.toLowerCase())
                     ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
@@ -461,6 +494,18 @@ const searchFilter = computed({
                   View Conversation
                 </button>
               </div>
+            </div>
+
+            <!-- Stripe spend -->
+            <div class="shrink-0 text-right">
+              <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin text-muted" />
+              <span
+                v-else-if="stripeSpend[row.original.json_payload?.email?.toLowerCase()]"
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
+              >
+                <UIcon name="i-lucide-credit-card" class="size-3" />
+                ${{ stripeSpend[row.original.json_payload.email.toLowerCase()].toLocaleString() }}
+              </span>
             </div>
           </div>
         </template>

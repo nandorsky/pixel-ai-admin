@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
 
   const supabase = createClient(
     config.public.supabaseUrl as string,
-    config.public.supabaseKey as string
+    config.supabaseServiceRoleKey as string
   )
 
   // Look up the signup by email

@@ -10,70 +10,72 @@ async function logout() {
   navigateTo('/login')
 }
 
-const links = [[{
-  label: 'Dashboard',
-  icon: 'i-lucide-layout-dashboard',
-  to: '/',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Waitlist',
-  icon: 'i-lucide-list-check',
-  to: '/signups',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Signups',
-  icon: 'i-lucide-user-plus',
-  to: '/app-signups',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Prompts',
-  icon: 'i-lucide-activity',
-  to: '/traces',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Referrals',
-  icon: 'i-lucide-share-2',
-  to: '/referrals',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Inbox',
-  icon: 'i-lucide-mail',
-  to: '/inbox',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Campaigns',
-  icon: 'i-lucide-megaphone',
-  to: '/campaigns',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Email Accounts',
-  icon: 'i-lucide-at-sign',
-  to: '/email-accounts',
-  onSelect: () => {
-    open.value = false
-  }
-}, {
-  label: 'Network',
-  icon: 'i-lucide-git-branch',
-  to: '/network',
-  onSelect: () => {
-    open.value = false
-  }
-}]] satisfies NavigationMenuItem[][]
+const links = [
+  [{
+    label: 'Dashboard',
+    icon: 'i-lucide-layout-dashboard',
+    to: '/',
+    onSelect: () => { open.value = false }
+  }],
+  [{
+    label: 'Product',
+    type: 'label' as const
+  }, {
+    label: 'Signups',
+    icon: 'i-lucide-user-plus',
+    to: '/app-signups',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Prompts',
+    icon: 'i-lucide-activity',
+    to: '/traces',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Payments',
+    icon: 'i-lucide-credit-card',
+    to: '/payments',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Analytics',
+    icon: 'i-lucide-bar-chart-3',
+    to: '/analytics',
+    onSelect: () => { open.value = false }
+  }],
+  [{
+    label: 'Go to Market',
+    type: 'label' as const
+  }, {
+    label: 'Inbox',
+    icon: 'i-lucide-mail',
+    to: '/inbox',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Campaigns',
+    icon: 'i-lucide-megaphone',
+    to: '/campaigns',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Email Accounts',
+    icon: 'i-lucide-at-sign',
+    to: '/email-accounts',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Network',
+    icon: 'i-lucide-git-branch',
+    to: '/network',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Waitlist',
+    icon: 'i-lucide-list-check',
+    to: '/signups',
+    onSelect: () => { open.value = false }
+  }, {
+    label: 'Referrals',
+    icon: 'i-lucide-share-2',
+    to: '/referrals',
+    onSelect: () => { open.value = false }
+  }]
+] satisfies NavigationMenuItem[][]
 </script>
 
 <template>
@@ -93,7 +95,7 @@ const links = [[{
       <template #default="{ collapsed }">
         <UNavigationMenu
           :collapsed="collapsed"
-          :items="links[0]"
+          :items="links"
           orientation="vertical"
           tooltip
         />

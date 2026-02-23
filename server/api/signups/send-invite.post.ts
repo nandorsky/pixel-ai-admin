@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   const resend = new Resend(config.resendApiKey as string)
   const supabase = createClient(
     config.public.supabaseUrl as string,
-    config.public.supabaseKey as string
+    config.supabaseServiceRoleKey as string
   )
 
   const template = body.htmlTemplate || buildInviteTemplate()
