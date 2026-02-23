@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { h } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 import { getPaginationRowModel } from '@tanstack/table-core'
 import { getSignupSource, getSourceColor } from '~/utils/signup-source'
+
+const UCheckbox = resolveComponent('UCheckbox')
 
 const supabase = useSupabase()
 const toast = useToast()
@@ -19,6 +22,7 @@ interface AppSignup {
     referralCode: string | null
   }
   linkedin_json: any | null
+  feedback_request: string | null
 }
 
 const data = ref<AppSignup[]>([])
@@ -39,6 +43,8 @@ const selectedTraceIndex = ref(0)
 const showProfile = ref(false)
 const profileData = ref<any>(null)
 
+const rowSelection = ref({})
+
 const viewTab = ref('all')
 
 const columnFilters = ref([{
@@ -57,7 +63,7 @@ async function fetchAppSignups() {
   const [signupsResult, waitlistResult, testUsersResult] = await Promise.all([
     supabase
       .from('app_signups')
-      .select('id, created_at, json_payload, linkedin_json')
+      .select('id, created_at, json_payload, linkedin_json, feedback_request')
       .order('created_at', { ascending: false }),
     supabase
       .from('signups')
@@ -281,6 +287,114 @@ async function fetchStripeSpend() {
   isLoadingStripe.value = false
 }
 
+const selectedRows = computed(() => {
+  const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
+  return indices.map(i => filteredData.value[Number(i)]).filter(Boolean)
+})
+
+const showFeedbackModal = ref(false)
+const feedbackSubject = ref('')
+const feedbackPreviewHtml = ref('')
+const loadingFeedbackPreview = ref(false)
+const feedbackPreviewRef = ref<HTMLElement | null>(null)
+const feedbackPreviewFirstName = ref('')
+const sendingFeedback = ref(false)
+
+async function openFeedbackModal() {
+  const first = selectedRows.value[0]
+  if (!first) return
+
+  showFeedbackModal.value = true
+  loadingFeedbackPreview.value = true
+
+  try {
+    const { subject, html } = await $fetch('/api/app-signups/preview-feedback', {
+      method: 'POST',
+      body: { id: first.id }
+    }) as { subject: string; html: string }
+
+    feedbackSubject.value = subject
+    feedbackPreviewHtml.value = html
+    feedbackPreviewFirstName.value = getName(first)?.split(' ')[0] || ''
+  } catch (err: any) {
+    toast.add({
+      title: 'Error loading preview',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+    showFeedbackModal.value = false
+  } finally {
+    loadingFeedbackPreview.value = false
+  }
+}
+
+async function confirmSendFeedback() {
+  const selected = selectedRows.value
+  if (selected.length === 0) return
+
+  sendingFeedback.value = true
+  try {
+    const editedHtml = feedbackPreviewRef.value?.innerHTML || feedbackPreviewHtml.value
+    const greeting = feedbackPreviewFirstName.value ? `Hey ${feedbackPreviewFirstName.value},` : 'Hey there,'
+
+    let htmlTemplate = editedHtml
+      .replace(new RegExp(greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{greeting}}')
+
+    const { results } = await $fetch('/api/app-signups/send-feedback', {
+      method: 'POST',
+      body: {
+        ids: selected.map(s => s.id),
+        subject: feedbackSubject.value,
+        htmlTemplate
+      }
+    }) as { results: { id: number; status: string; error?: string }[] }
+
+    const sentCount = results.filter(r => r.status === 'sent').length
+    const alreadySentCount = results.filter(r => r.status === 'already_sent').length
+    const errorCount = results.filter(r => r.status === 'error').length
+
+    const now = new Date().toISOString()
+    for (const result of results) {
+      if (result.status === 'sent') {
+        const signup = data.value.find(s => s.id === result.id)
+        if (signup) signup.feedback_request = now
+      }
+    }
+
+    const parts: string[] = []
+    if (sentCount > 0) parts.push(`${sentCount} sent`)
+    if (alreadySentCount > 0) parts.push(`${alreadySentCount} already sent`)
+    if (errorCount > 0) parts.push(`${errorCount} failed`)
+
+    const errors = results.filter(r => r.status === 'error' && r.error).map(r => r.error)
+    const description = errors.length > 0
+      ? `${parts.join(', ')} — ${errors.join('; ')}`
+      : parts.join(', ')
+
+    toast.add({
+      title: 'Feedback request emails processed',
+      description,
+      color: errorCount > 0 ? 'warning' : 'success'
+    })
+
+    showFeedbackModal.value = false
+    rowSelection.value = {}
+  } catch (err: any) {
+    toast.add({
+      title: 'Error sending feedback requests',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+  } finally {
+    sendingFeedback.value = false
+  }
+}
+
+watch(viewTab, () => {
+  rowSelection.value = {}
+  pagination.value.pageIndex = 0
+})
+
 onMounted(() => {
   fetchAppSignups()
   fetchActiveEmails()
@@ -298,6 +412,23 @@ function formatDate(dateString: string) {
 }
 
 const columns: TableColumn<AppSignup>[] = [
+  {
+    id: 'select',
+    header: ({ table }) => h(UCheckbox, {
+      'modelValue': table.getIsSomePageRowsSelected() ? 'indeterminate' : table.getIsAllPageRowsSelected(),
+      'onUpdate:modelValue': (value: boolean | 'indeterminate') => table.toggleAllPageRowsSelected(!!value),
+      'ariaLabel': 'Select all'
+    }),
+    cell: ({ row }) => h(UCheckbox, {
+      'modelValue': row.getIsSelected(),
+      'onUpdate:modelValue': (value: boolean | 'indeterminate') => row.toggleSelected(!!value),
+      'ariaLabel': 'Select row'
+    })
+  },
+  {
+    accessorKey: 'id',
+    header: 'ID'
+  },
   {
     id: 'email',
     header: 'Email',
@@ -378,18 +509,29 @@ const searchFilter = computed({
         >
           Paying <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ payingCount }})</template>
         </button>
-        <UInput
-          v-model="searchFilter"
-          class="max-w-48 ml-auto"
-          size="sm"
-          icon="i-lucide-search"
-          placeholder="Search..."
-        />
+        <div class="flex items-center gap-1.5 ml-auto">
+          <UButton
+            v-if="selectedRows.length > 0 && viewTab === 'active'"
+            :label="`Send Feedback Request (${selectedRows.length})`"
+            icon="i-lucide-message-square"
+            color="primary"
+            size="sm"
+            @click="openFeedbackModal"
+          />
+          <UInput
+            v-model="searchFilter"
+            class="max-w-48"
+            size="sm"
+            icon="i-lucide-search"
+            placeholder="Search..."
+          />
+        </div>
       </div>
 
       <UTable
         ref="table"
         v-model:column-filters="columnFilters"
+        v-model:row-selection="rowSelection"
         v-model:pagination="pagination"
         :pagination-options="{
           getPaginationRowModel: getPaginationRowModel()
@@ -447,6 +589,14 @@ const searchFilter = computed({
                   >
                     <span class="size-1.5 rounded-full bg-violet-500 animate-pulse" />
                     Active
+                  </span>
+                  <span
+                    v-if="row.original.feedback_request"
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                    :title="`Feedback requested ${formatDate(row.original.feedback_request)}`"
+                  >
+                    <UIcon name="i-lucide-message-square" class="size-3" />
+                    Feedback
                   </span>
                 </div>
               </div>
@@ -766,4 +916,69 @@ const searchFilter = computed({
       </div>
     </template>
   </USlideover>
+
+  <!-- Feedback Request Modal -->
+  <UModal v-model:open="showFeedbackModal" title="Preview Feedback Request Email" :ui="{ width: 'max-w-2xl' }">
+    <template #body>
+      <div class="space-y-4">
+        <!-- Recipients -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">To ({{ selectedRows.length }})</label>
+          <div class="flex flex-wrap gap-1.5">
+            <span
+              v-for="s in selectedRows.slice(0, 10)"
+              :key="s.id"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800 text-muted"
+            >
+              {{ getName(s) || s.json_payload?.email?.split('@')[0] || '—' }}
+            </span>
+            <span v-if="selectedRows.length > 10" class="text-xs text-muted self-center">
+              +{{ selectedRows.length - 10 }} more
+            </span>
+          </div>
+        </div>
+
+        <!-- Subject -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
+          <UInput v-model="feedbackSubject" class="w-full" />
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Preview</label>
+          <div v-if="loadingFeedbackPreview" class="flex items-center justify-center py-12 rounded-lg border border-default bg-white">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div
+            v-else
+            ref="feedbackPreviewRef"
+            contenteditable="true"
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96 focus:outline-none focus:ring-2 focus:ring-primary"
+            v-html="feedbackPreviewHtml"
+          />
+          <p v-if="selectedRows.length > 1" class="text-xs text-muted mt-1">
+            Showing preview for {{ getName(selectedRows[0]) || selectedRows[0]?.json_payload?.email }}. Name is personalized per recipient.
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="subtle"
+            @click="showFeedbackModal = false"
+          />
+          <UButton
+            :label="`Send to ${selectedRows.length} recipient${selectedRows.length > 1 ? 's' : ''}`"
+            icon="i-lucide-send"
+            color="primary"
+            :loading="sendingFeedback"
+            @click="confirmSendFeedback"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
 </template>

@@ -76,7 +76,7 @@ export default defineEventHandler(async (event) => {
     let pages = 0
 
     while (hasMore && pages < 10) {
-      const params = new URLSearchParams({ limit: '100' })
+      const params = new URLSearchParams({ limit: '100', 'created[gte]': '1739836800' })
       if (startingAfter) params.append('starting_after', startingAfter)
 
       const result = await $fetch<any>(`${baseUrl}/charges?${params}`, { headers })

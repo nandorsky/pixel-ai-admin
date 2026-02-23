@@ -7,6 +7,7 @@ const supabase = useSupabase()
 const toast = useToast()
 
 const ALLOWED_DOMAIN = '@metadata.io'
+const ALLOWED_EMAILS = ['pixel@vcboy.com']
 
 const email = ref('')
 const isLoading = ref(false)
@@ -30,7 +31,7 @@ async function sendMagicLink() {
     return
   }
 
-  if (!email.value.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
+  if (!email.value.toLowerCase().endsWith(ALLOWED_DOMAIN) && !ALLOWED_EMAILS.includes(email.value.toLowerCase())) {
     toast.add({
       title: 'Access denied',
       description: 'Only @metadata.io email addresses are allowed',
