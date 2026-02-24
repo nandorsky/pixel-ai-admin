@@ -21,6 +21,7 @@ export default defineEventHandler(async (event) => {
     'Authorization': `Bearer ${apiKey}`,
     'Stripe-Version': '2024-12-18.acacia'
   }
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
   try {
     // Step 1: Get Pixel emails from app_signups, excluding test users
@@ -41,12 +42,13 @@ export default defineEventHandler(async (event) => {
 
     console.log(`=== STRIPE: Looking up ${pixelEmails.length} Pixel emails ===`)
 
-    // Step 2: Look up each email in Stripe (search API is fast per-email)
+    // Step 2: Look up each email in Stripe
+    // Batch 5 at a time with delay to stay within rate limits
     const customers: any[] = []
+    let errorCount = 0
 
-    // Batch in parallel, 20 at a time to avoid rate limits
-    for (let i = 0; i < pixelEmails.length; i += 20) {
-      const batch = pixelEmails.slice(i, i + 20)
+    for (let i = 0; i < pixelEmails.length; i += 5) {
+      const batch = pixelEmails.slice(i, i + 5)
       const results = await Promise.all(
         batch.map(async (email) => {
           try {
@@ -55,7 +57,9 @@ export default defineEventHandler(async (event) => {
               { headers }
             )
             return result.data || []
-          } catch {
+          } catch (err: any) {
+            errorCount++
+            console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
             return []
           }
         })
@@ -63,9 +67,13 @@ export default defineEventHandler(async (event) => {
       for (const group of results) {
         customers.push(...group)
       }
+      // Stripe rate limit: 20 read requests/sec for search
+      if (i + 5 < pixelEmails.length) {
+        await delay(300)
+      }
     }
 
-    console.log(`Found ${customers.length} Stripe customers`)
+    console.log(`Found ${customers.length} Stripe customers (${errorCount} lookup errors)`)
 
     // Step 3: Get charges for matched customer IDs only
     const customerIds = new Set(customers.map((c: any) => c.id))
@@ -76,7 +84,7 @@ export default defineEventHandler(async (event) => {
       let startingAfter: string | undefined
       let pages = 0
 
-      while (hasMore && pages < 5) {
+      while (hasMore && pages < 10) {
         const params = new URLSearchParams({ limit: '100', 'created[gte]': '1739836800' })
         if (startingAfter) params.append('starting_after', startingAfter)
 
@@ -108,7 +116,7 @@ export default defineEventHandler(async (event) => {
 
     const totalRevenue = mapped.reduce((sum: number, c: any) => sum + c.totalSpend, 0)
 
-    console.log('=== STRIPE: Done ===')
+    console.log(`=== STRIPE: Done — ${mapped.length} customers, $${totalRevenue.toFixed(2)} revenue ===`)
 
     return {
       customers: mapped,
