@@ -628,7 +628,7 @@ const searchFilter = computed({
                     :title="`Feedback requested ${formatDate(row.original.feedback_request)}`"
                   >
                     <UIcon name="i-lucide-message-square" class="size-3" />
-                    Feedback
+                    Feedback Requested
                   </span>
                 </div>
               </div>
@@ -679,20 +679,44 @@ const searchFilter = computed({
                   <UIcon name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle mr-0.5" />
                   Sessions
                 </span>
-                <template v-else-if="fullstorySessions[row.original.json_payload?.email?.toLowerCase()]">
-                  <a
-                    v-for="session in fullstorySessions[row.original.json_payload.email.toLowerCase()].slice(0, 3)"
-                    :key="session.sessionId"
-                    :href="session.fsUrl"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                <UPopover
+                  v-else-if="fullstorySessions[row.original.json_payload?.email?.toLowerCase()]?.length > 1"
+                >
+                  <button
                     class="inline-flex items-center gap-0.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
                     @click.stop
                   >
                     <UIcon name="i-lucide-play-circle" class="size-3" />
-                    Session
-                  </a>
-                </template>
+                    {{ fullstorySessions[row.original.json_payload.email.toLowerCase()].length }} Sessions
+                  </button>
+                  <template #content>
+                    <div class="p-1 space-y-0.5">
+                      <a
+                        v-for="session in fullstorySessions[row.original.json_payload.email.toLowerCase()]"
+                        :key="session.sessionId"
+                        :href="session.fsUrl"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="flex items-center gap-2 px-3 py-1.5 rounded text-xs hover:bg-elevated transition-colors"
+                        @click.stop
+                      >
+                        <UIcon name="i-lucide-play-circle" class="size-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                        {{ new Date(session.createdTime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}
+                      </a>
+                    </div>
+                  </template>
+                </UPopover>
+                <a
+                  v-else-if="fullstorySessions[row.original.json_payload?.email?.toLowerCase()]?.length === 1"
+                  :href="fullstorySessions[row.original.json_payload.email.toLowerCase()][0].fsUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-0.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  @click.stop
+                >
+                  <UIcon name="i-lucide-play-circle" class="size-3" />
+                  Session
+                </a>
               </div>
             </div>
 
