@@ -313,8 +313,10 @@ async function fetchFullstorySessions() {
   isLoadingFullstory.value = false
 }
 
-watch([() => pagination.value.pageIndex, viewTab], () => {
-  fetchFullstorySessions()
+watch([() => pagination.value.pageIndex, viewTab, isFetching], () => {
+  if (!isFetching.value) {
+    fetchFullstorySessions()
+  }
 })
 
 const selectedRows = computed(() => {
@@ -429,7 +431,6 @@ onMounted(() => {
   fetchAppSignups()
   fetchActiveEmails()
   fetchStripeSpend()
-  fetchFullstorySessions()
 })
 
 function formatDate(dateString: string) {
@@ -685,7 +686,7 @@ const searchFilter = computed({
                     :href="session.fsUrl"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="inline-flex items-center gap-0.5 text-xs text-purple-600 dark:text-purple-400 hover:underline"
+                    class="inline-flex items-center gap-0.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
                     @click.stop
                   >
                     <UIcon name="i-lucide-play-circle" class="size-3" />
