@@ -32,5 +32,13 @@ export default defineNuxtConfig({
     }
   },
 
+  nitro: {
+    vercel: {
+      functions: {
+        maxDuration: 60
+      }
+    }
+  },
+
   compatibilityDate: '2025-01-13'
 })
