@@ -34,6 +34,8 @@ const rawTracesByEmail = ref<Record<string, any[]>>({})
 const isLoadingActive = ref(true)
 const stripeSpend = ref<Record<string, number>>({})
 const isLoadingStripe = ref(true)
+const fullstorySessions = ref<Record<string, { sessionId: string; createdTime: number; fsUrl: string }[]>>({})
+const isLoadingFullstory = ref(true)
 
 const showDetail = ref(false)
 const selectedEmail = ref('')
@@ -287,6 +289,34 @@ async function fetchStripeSpend() {
   isLoadingStripe.value = false
 }
 
+async function fetchFullstorySessions() {
+  const { pageIndex, pageSize } = pagination.value
+  const pageRows = filteredData.value.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
+  const emails = pageRows
+    .map(r => r.json_payload?.email?.toLowerCase())
+    .filter((e): e is string => !!e && !fullstorySessions.value[e])
+
+  if (emails.length === 0) {
+    isLoadingFullstory.value = false
+    return
+  }
+  isLoadingFullstory.value = true
+  try {
+    const result = await $fetch<any>('/api/fullstory/sessions-by-email', {
+      method: 'POST',
+      body: { emails }
+    })
+    fullstorySessions.value = { ...fullstorySessions.value, ...(result.sessionsByEmail || {}) }
+  } catch {
+    // Silently fail - not critical
+  }
+  isLoadingFullstory.value = false
+}
+
+watch([() => pagination.value.pageIndex, viewTab], () => {
+  fetchFullstorySessions()
+})
+
 const selectedRows = computed(() => {
   const indices = Object.keys(rowSelection.value).filter(k => rowSelection.value[k as keyof typeof rowSelection.value])
   return indices.map(i => filteredData.value[Number(i)]).filter(Boolean)
@@ -399,6 +429,7 @@ onMounted(() => {
   fetchAppSignups()
   fetchActiveEmails()
   fetchStripeSpend()
+  fetchFullstorySessions()
 })
 
 function formatDate(dateString: string) {
@@ -643,6 +674,24 @@ const searchFilter = computed({
                 >
                   View Conversation
                 </button>
+                <span v-if="isLoadingFullstory" class="text-xs text-muted/50">
+                  <UIcon name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle mr-0.5" />
+                  Sessions
+                </span>
+                <template v-else-if="fullstorySessions[row.original.json_payload?.email?.toLowerCase()]">
+                  <a
+                    v-for="session in fullstorySessions[row.original.json_payload.email.toLowerCase()].slice(0, 3)"
+                    :key="session.sessionId"
+                    :href="session.fsUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-0.5 text-xs text-purple-600 dark:text-purple-400 hover:underline"
+                    @click.stop
+                  >
+                    <UIcon name="i-lucide-play-circle" class="size-3" />
+                    Session
+                  </a>
+                </template>
               </div>
             </div>
 
