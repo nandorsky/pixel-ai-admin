@@ -8,14 +8,8 @@ interface FullStorySession {
 }
 
 interface FullStoryUser {
-  id: string
-  uid: string
+  email: string
   displayName: string | null
-  email: string | null
-  accountStatus: string | null
-  accountName: string | null
-  role: string | null
-  appUrl: string | null
   sessions: FullStorySession[]
 }
 
@@ -25,34 +19,21 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const search = ref('')
 
-const statusColors: Record<string, string> = {
-  ACTIVE_TRIAL: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  ACTIVE: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  CHURNED: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-  EXPIRED: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200'
-}
-
 const filteredUsers = computed(() => {
   if (!search.value) return users.value
   const q = search.value.toLowerCase()
   return users.value.filter(u =>
     u.email?.toLowerCase().includes(q) ||
-    u.displayName?.toLowerCase().includes(q) ||
-    u.accountName?.toLowerCase().includes(q)
+    u.displayName?.toLowerCase().includes(q)
   )
-})
-
-const statusBreakdown = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const u of users.value) {
-    const status = u.accountStatus || 'Unknown'
-    counts[status] = (counts[status] || 0) + 1
-  }
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])
 })
 
 const totalSessions = computed(() => {
   return users.value.reduce((sum, u) => sum + u.sessions.length, 0)
+})
+
+const withSessions = computed(() => {
+  return users.value.filter(u => u.sessions.length > 0).length
 })
 
 async function fetchUsers() {
@@ -71,11 +52,6 @@ async function fetchUsers() {
     })
   }
   isLoading.value = false
-}
-
-function formatStatus(status: string | null): string {
-  if (!status) return 'Unknown'
-  return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function formatSessionDate(timestamp: number): string {
@@ -118,7 +94,7 @@ onMounted(() => {
       <!-- Loading -->
       <div v-if="isLoading" class="flex flex-col items-center justify-center py-24 gap-3">
         <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-muted" />
-        <p class="text-sm text-muted">Loading FullStory data... this may take a moment</p>
+        <p class="text-sm text-muted">Loading FullStory data...</p>
       </div>
 
       <!-- Error -->
@@ -133,20 +109,16 @@ onMounted(() => {
         <!-- Stats -->
         <div class="flex items-center gap-3 mb-4">
           <div class="bg-elevated px-4 py-2 rounded-lg">
-            <span class="text-xs text-muted uppercase tracking-wide">Pixel AI Users</span>
+            <span class="text-xs text-muted uppercase tracking-wide">App Signups</span>
             <span class="text-lg font-semibold text-highlighted ml-2">{{ total }}</span>
+          </div>
+          <div class="bg-elevated px-4 py-2 rounded-lg">
+            <span class="text-xs text-muted uppercase tracking-wide">With Sessions</span>
+            <span class="text-lg font-semibold text-highlighted ml-2">{{ withSessions }}</span>
           </div>
           <div class="bg-elevated px-4 py-2 rounded-lg">
             <span class="text-xs text-muted uppercase tracking-wide">Total Sessions</span>
             <span class="text-lg font-semibold text-highlighted ml-2">{{ totalSessions }}</span>
-          </div>
-          <div
-            v-for="[status, count] in statusBreakdown"
-            :key="status"
-            class="bg-elevated px-4 py-2 rounded-lg"
-          >
-            <span class="text-xs text-muted uppercase tracking-wide">{{ formatStatus(status) }}</span>
-            <span class="text-lg font-semibold text-highlighted ml-2">{{ count }}</span>
           </div>
         </div>
 
@@ -167,33 +139,20 @@ onMounted(() => {
             <thead>
               <tr class="bg-elevated/50">
                 <th class="text-left px-4 py-2.5 font-medium text-muted">User</th>
-                <th class="text-left px-4 py-2.5 font-medium text-muted">Account</th>
-                <th class="text-left px-4 py-2.5 font-medium text-muted">Status</th>
                 <th class="text-left px-4 py-2.5 font-medium text-muted">Sessions</th>
               </tr>
             </thead>
             <tbody>
               <tr
                 v-for="user in filteredUsers"
-                :key="user.id"
+                :key="user.email"
                 class="border-t border-default hover:bg-elevated/30 align-top"
               >
                 <td class="px-4 py-3">
                   <div>
                     <div v-if="user.displayName" class="font-medium">{{ user.displayName }}</div>
-                    <div class="text-xs text-muted">{{ user.email || '—' }}</div>
+                    <div class="text-xs text-muted">{{ user.email }}</div>
                   </div>
-                </td>
-                <td class="px-4 py-3 text-muted">
-                  {{ user.accountName || '—' }}
-                </td>
-                <td class="px-4 py-3">
-                  <span
-                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                    :class="statusColors[user.accountStatus || ''] || statusColors.EXPIRED"
-                  >
-                    {{ formatStatus(user.accountStatus) }}
-                  </span>
                 </td>
                 <td class="px-4 py-3">
                   <div v-if="user.sessions.length > 0" class="flex flex-col gap-1">
@@ -213,7 +172,7 @@ onMounted(() => {
                 </td>
               </tr>
               <tr v-if="filteredUsers.length === 0">
-                <td colspan="4" class="text-center py-8 text-muted text-sm">
+                <td colspan="2" class="text-center py-8 text-muted text-sm">
                   No users found
                 </td>
               </tr>

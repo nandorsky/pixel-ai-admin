@@ -25,6 +25,8 @@ const isFetching = ref(true)
 const totalTraces = ref(0)
 const selectedTrace = ref<Trace | null>(null)
 const showDetail = ref(false)
+const fullstorySessions = ref<Record<string, { sessionId: string; createdTime: number; fsUrl: string }[]>>({})
+const isLoadingFullstory = ref(false)
 
 const page = ref(1)
 const pageSize = 50
@@ -59,6 +61,26 @@ async function fetchAppSignups() {
     if (email) map[email.toLowerCase()] = r
   }
   appSignupByEmail.value = map
+}
+
+async function fetchFullstorySessions() {
+  const emails = [...new Set(
+    data.value
+      .map(t => getUserEmail(t)?.toLowerCase())
+      .filter((e): e is string => !!e && !fullstorySessions.value[e])
+  )]
+  if (emails.length === 0) return
+  isLoadingFullstory.value = true
+  try {
+    const result = await $fetch<any>('/api/fullstory/sessions-by-email', {
+      method: 'POST',
+      body: { emails }
+    })
+    fullstorySessions.value = { ...fullstorySessions.value, ...(result.sessionsByEmail || {}) }
+  } catch {
+    // Silently fail
+  }
+  isLoadingFullstory.value = false
 }
 
 function getLinkedInPhoto(lj: any): string | null {
@@ -121,6 +143,7 @@ async function fetchTraces() {
     })
   }
   isFetching.value = false
+  fetchFullstorySessions()
 }
 
 onMounted(async () => {
@@ -203,7 +226,7 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
 </script>
 
 <template>
-  <UDashboardPanel id="traces">
+  <UDashboardPanel id="prompts">
     <template #header>
       <UDashboardNavbar title="Prompts">
         <template #leading>
@@ -296,6 +319,23 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
                 <UIcon name="i-lucide-image" class="size-3" />
                 {{ getImageUrls(trace).length }} image{{ getImageUrls(trace).length > 1 ? 's' : '' }}
               </span>
+              <span v-if="isLoadingFullstory && !fullstorySessions[getUserEmail(trace)?.toLowerCase() || '']" class="text-muted/50">
+                <UIcon name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" />
+              </span>
+              <template v-else-if="fullstorySessions[getUserEmail(trace)?.toLowerCase() || '']">
+                <a
+                  v-for="session in fullstorySessions[getUserEmail(trace)!.toLowerCase()].slice(0, 1)"
+                  :key="session.sessionId"
+                  :href="session.fsUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+                  @click.stop
+                >
+                  <UIcon name="i-lucide-play-circle" class="size-3" />
+                  Session{{ fullstorySessions[getUserEmail(trace)!.toLowerCase()].length > 1 ? ` (${fullstorySessions[getUserEmail(trace)!.toLowerCase()].length})` : '' }}
+                </a>
+              </template>
             </div>
           </div>
         </div>

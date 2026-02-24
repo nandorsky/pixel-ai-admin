@@ -28,7 +28,7 @@ const links = [
   }, {
     label: 'Prompts',
     icon: 'i-lucide-activity',
-    to: '/traces',
+    to: '/prompts',
     onSelect: () => { open.value = false }
   }, {
     label: 'Payments',

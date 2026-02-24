@@ -44,9 +44,9 @@ export default defineEventHandler(async (event) => {
     // Step 2: Look up each email in Stripe (search API is fast per-email)
     const customers: any[] = []
 
-    // Batch in parallel, 10 at a time to avoid rate limits
-    for (let i = 0; i < pixelEmails.length; i += 10) {
-      const batch = pixelEmails.slice(i, i + 10)
+    // Batch in parallel, 20 at a time to avoid rate limits
+    for (let i = 0; i < pixelEmails.length; i += 20) {
+      const batch = pixelEmails.slice(i, i + 20)
       const results = await Promise.all(
         batch.map(async (email) => {
           try {
@@ -104,7 +104,7 @@ export default defineEventHandler(async (event) => {
         totalSpend: (chargesByCustomer[c.id] || 0) / 100,
         created: c.created
       }))
-      .sort((a: any, b: any) => b.totalSpend - a.totalSpend)
+      .sort((a: any, b: any) => b.created - a.created)
 
     const totalRevenue = mapped.reduce((sum: number, c: any) => sum + c.totalSpend, 0)
 
