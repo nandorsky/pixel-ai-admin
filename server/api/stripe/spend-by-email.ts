@@ -39,11 +39,12 @@ export default defineEventHandler(async (event) => {
         .filter((e: string) => e && !suppressedEmails.has(e) && !e.endsWith('@metadata.io'))
     )]
 
-    // Search Stripe for each email, 10 at a time in parallel
+    // Search Stripe for each email, 5 at a time with delay
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
     const customerIdToEmail: Record<string, string> = {}
 
-    for (let i = 0; i < pixelEmails.length; i += 10) {
-      const batch = pixelEmails.slice(i, i + 10)
+    for (let i = 0; i < pixelEmails.length; i += 5) {
+      const batch = pixelEmails.slice(i, i + 5)
       const results = await Promise.all(
         batch.map(async (email) => {
           try {
@@ -52,7 +53,8 @@ export default defineEventHandler(async (event) => {
               { headers }
             )
             return (result.data || []).map((c: any) => ({ id: c.id, email: email }))
-          } catch {
+          } catch (err: any) {
+            console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
             return []
           }
         })
@@ -61,6 +63,9 @@ export default defineEventHandler(async (event) => {
         for (const c of group) {
           customerIdToEmail[c.id] = c.email
         }
+      }
+      if (i + 5 < pixelEmails.length) {
+        await delay(300)
       }
     }
 
