@@ -7,7 +7,7 @@ const supabase = useSupabase()
 const toast = useToast()
 
 const ALLOWED_DOMAIN = '@metadata.io'
-const ALLOWED_EMAILS = ['pixel@vcboy.com']
+const ALLOWED_EMAILS = ['pixel@vcboy.com', 'founder@thought-pilot.co']
 
 const email = ref('')
 const isLoading = ref(false)
