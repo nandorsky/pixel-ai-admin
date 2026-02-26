@@ -23,6 +23,9 @@ const waitlistByEmail = ref<Record<string, any>>({})
 const appSignupByEmail = ref<Record<string, any>>({})
 const isFetching = ref(true)
 const totalTraces = ref(0)
+const totalCreatives = ref(0)
+const totalUniqueUsers = ref(0)
+const isLoadingStats = ref(true)
 const selectedTrace = ref<Trace | null>(null)
 const showDetail = ref(false)
 const fullstorySessions = ref<Record<string, { sessionId: string; createdTime: number; fsUrl: string }[]>>({})
@@ -120,6 +123,55 @@ function getUserName(email: string | null): string | null {
   return [signup.first_name, signup.last_name].filter(Boolean).join(' ') || null
 }
 
+async function fetchAllStats() {
+  isLoadingStats.value = true
+  try {
+    let pg = 1
+    const size = 200
+    let total = 0
+    let creatives = 0
+    const users = new Set<string>()
+
+    do {
+      const result = await $fetch<any>('/api/opik/traces', {
+        params: { page: pg, size }
+      })
+      total = result.total || 0
+      for (const trace of (result.content || [])) {
+        const email = trace.metadata?.user_email || trace.metadata?.user_meail
+        if (email && testEmails.value.has(email.toLowerCase())) continue
+        if (email) users.add(email.toLowerCase())
+
+        // Count images
+        if (trace.output?.messages?.length) {
+          const pngRegex = /https?:\/\/[^\s"']+\.png/gi
+          const seen = new Set<string>()
+          for (const msg of trace.output.messages) {
+            const content = msg.content || ''
+            const text = typeof content === 'string' ? content : JSON.stringify(content)
+            const matches = text.match(pngRegex)
+            if (matches) {
+              for (const url of matches) {
+                if (!seen.has(url)) {
+                  seen.add(url)
+                  creatives++
+                }
+              }
+            }
+          }
+        }
+      }
+      pg++
+    } while ((pg - 1) * size < total)
+
+    totalCreatives.value = creatives
+    totalUniqueUsers.value = users.size
+  } catch {
+    // Silently fail
+  }
+  isLoadingStats.value = false
+}
+
 async function fetchTraces() {
   isFetching.value = true
   try {
@@ -149,6 +201,7 @@ async function fetchTraces() {
 onMounted(async () => {
   await Promise.all([fetchTestEmails(), fetchWaitlistUsers(), fetchAppSignups()])
   fetchTraces()
+  fetchAllStats()
 })
 
 watch(page, () => {
@@ -236,6 +289,25 @@ const totalPages = computed(() => Math.ceil(totalTraces.value / pageSize))
     </template>
 
     <template #body>
+      <!-- Stats -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Prompts</span>
+          <UIcon v-if="isLoadingStats" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <span v-else class="text-lg font-semibold text-highlighted ml-2">{{ totalTraces.toLocaleString() }}</span>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Creatives</span>
+          <UIcon v-if="isLoadingStats" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <span v-else class="text-lg font-semibold text-highlighted ml-2">{{ totalCreatives.toLocaleString() }}</span>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Unique Users</span>
+          <UIcon v-if="isLoadingStats" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <span v-else class="text-lg font-semibold text-highlighted ml-2">{{ totalUniqueUsers.toLocaleString() }}</span>
+        </div>
+      </div>
+
       <!-- Loading -->
       <div v-if="isFetching && !data.length" class="flex items-center justify-center py-16">
         <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />

@@ -149,6 +149,11 @@ const localTemplates: ReplyTemplate[] = [
     id: -1,
     name: 'Why not?',
     body: "Appreciate the response.\n\nIf you don't mind me asking, curious why not?\n\nI thought this would be a no brainer, but I think I am missing something?"
+  },
+  {
+    id: -2,
+    name: 'Signup link',
+    body: "Great!\n\nI've provided a signup link below which will load your account with 1,750 credits to give it a try.\n\nWould love to hear what you think of it!\n\nhttps://app.getpixel.ai/easignup"
   }
 ]
 

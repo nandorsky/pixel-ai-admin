@@ -48,6 +48,7 @@ interface Signup {
   product_access: boolean | null
   invite_sent_at: string | null
   follow_up_sent_at: string | null
+  signup_reminder_sent_at: string | null
 }
 
 const toast = useToast()
@@ -81,6 +82,9 @@ const filteredData = computed(() => {
   if (viewTab.value === 'follow_up') {
     return data.value.filter(s => s.invite_sent_at && !s.follow_up_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase()))
   }
+  if (viewTab.value === 'signup_reminder') {
+    return data.value.filter(s => s.invite_sent_at && !s.signup_reminder_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase()))
+  }
   return data.value
 })
 
@@ -94,6 +98,10 @@ const noAccessCount = computed(() =>
 
 const followUpCount = computed(() =>
   data.value.filter(s => s.invite_sent_at && !s.follow_up_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase())).length
+)
+
+const signupReminderCount = computed(() =>
+  data.value.filter(s => s.invite_sent_at && !s.signup_reminder_sent_at && !appSignupEmails.value.has(s.email?.toLowerCase())).length
 )
 
 const uniqueSources = computed(() => {
@@ -446,6 +454,105 @@ async function confirmSendFollowUps() {
   }
 }
 
+// Signup Reminder
+const showSignupReminderModal = ref(false)
+const signupReminderSubject = ref('')
+const signupReminderPreviewHtml = ref('')
+const sendingSignupReminders = ref(false)
+const loadingSignupReminderPreview = ref(false)
+const signupReminderPreviewRef = ref<HTMLElement | null>(null)
+const signupReminderPreviewFirstName = ref('')
+
+async function openSignupReminderModal() {
+  const first = selectedRows.value[0]
+  if (!first) return
+
+  showSignupReminderModal.value = true
+  loadingSignupReminderPreview.value = true
+
+  try {
+    const { subject, html } = await $fetch('/api/signups/preview-signup-reminder', {
+      method: 'POST',
+      body: { id: first.id }
+    }) as { subject: string; html: string }
+
+    signupReminderSubject.value = subject
+    signupReminderPreviewHtml.value = html
+    signupReminderPreviewFirstName.value = first.first_name || ''
+  } catch (err: any) {
+    toast.add({
+      title: 'Error loading preview',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+    showSignupReminderModal.value = false
+  } finally {
+    loadingSignupReminderPreview.value = false
+  }
+}
+
+async function confirmSendSignupReminders() {
+  const selected = selectedRows.value
+  if (selected.length === 0) return
+
+  sendingSignupReminders.value = true
+  try {
+    const editedHtml = signupReminderPreviewRef.value?.innerHTML || signupReminderPreviewHtml.value
+    const greeting = signupReminderPreviewFirstName.value ? `Hey ${signupReminderPreviewFirstName.value},` : 'Hey there,'
+
+    let htmlTemplate = editedHtml
+      .replace(new RegExp(greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{greeting}}')
+
+    const { results } = await $fetch('/api/signups/send-signup-reminder', {
+      method: 'POST',
+      body: {
+        ids: selected.map(s => s.id),
+        subject: signupReminderSubject.value,
+        htmlTemplate
+      }
+    }) as { results: { id: number; status: string; error?: string }[] }
+
+    const sentCount = results.filter(r => r.status === 'sent').length
+    const alreadySentCount = results.filter(r => r.status === 'already_sent').length
+    const errorCount = results.filter(r => r.status === 'error').length
+
+    const now = new Date().toISOString()
+    for (const result of results) {
+      if (result.status === 'sent') {
+        const signup = data.value.find(s => Number(s.id) === result.id)
+        if (signup) signup.signup_reminder_sent_at = now
+      }
+    }
+
+    const parts: string[] = []
+    if (sentCount > 0) parts.push(`${sentCount} sent`)
+    if (alreadySentCount > 0) parts.push(`${alreadySentCount} already sent`)
+    if (errorCount > 0) parts.push(`${errorCount} failed`)
+
+    const errors = results.filter(r => r.status === 'error' && r.error).map(r => r.error)
+    const description = errors.length > 0
+      ? `${parts.join(', ')} — ${errors.join('; ')}`
+      : parts.join(', ')
+
+    toast.add({
+      title: 'Signup reminder emails processed',
+      description,
+      color: errorCount > 0 ? 'warning' : 'success'
+    })
+
+    showSignupReminderModal.value = false
+    rowSelection.value = {}
+  } catch (err: any) {
+    toast.add({
+      title: 'Error sending signup reminders',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+  } finally {
+    sendingSignupReminders.value = false
+  }
+}
+
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -581,6 +688,13 @@ const pagination = ref({
         >
           Follow Up ({{ followUpCount }})
         </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'signup_reminder' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'signup_reminder'"
+        >
+          Signup Reminder ({{ signupReminderCount }})
+        </button>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-1.5">
@@ -621,6 +735,24 @@ const pagination = ref({
             icon="i-lucide-mail-warning"
             color="warning"
             @click="openFollowUpModal"
+          />
+          <UButton
+            v-if="viewTab === 'signup_reminder'"
+            :label="selectedRows.length === filteredData.length && filteredData.length > 0 ? 'Deselect All' : `Select All (${filteredData.length})`"
+            icon="i-lucide-check-square"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            @click="selectedRows.length === filteredData.length && filteredData.length > 0
+              ? (rowSelection = {})
+              : (rowSelection = Object.fromEntries(filteredData.map((_, i) => [i, true])))"
+          />
+          <UButton
+            v-if="selectedRows.length > 0 && viewTab === 'signup_reminder'"
+            :label="`Send Signup Reminder (${selectedRows.length})`"
+            icon="i-lucide-mail-check"
+            color="primary"
+            @click="openSignupReminderModal"
           />
           <UDropdownMenu
             :items="
@@ -914,6 +1046,71 @@ const pagination = ref({
             color="warning"
             :loading="sendingFollowUps"
             @click="confirmSendFollowUps"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Signup Reminder Modal -->
+  <UModal v-model:open="showSignupReminderModal" title="Preview Signup Reminder Email" :ui="{ width: 'max-w-2xl' }">
+    <template #body>
+      <div class="space-y-4">
+        <!-- Recipients -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">To ({{ selectedRows.length }})</label>
+          <div class="flex flex-wrap gap-1.5">
+            <span
+              v-for="s in selectedRows.slice(0, 10)"
+              :key="s.id"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800 text-muted"
+            >
+              {{ s.first_name || s.email.split('@')[0] }} {{ s.last_name || '' }}
+            </span>
+            <span v-if="selectedRows.length > 10" class="text-xs text-muted self-center">
+              +{{ selectedRows.length - 10 }} more
+            </span>
+          </div>
+        </div>
+
+        <!-- Subject -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
+          <UInput v-model="signupReminderSubject" class="w-full" />
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Preview</label>
+          <div v-if="loadingSignupReminderPreview" class="flex items-center justify-center py-12 rounded-lg border border-default bg-white">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div
+            v-else
+            ref="signupReminderPreviewRef"
+            contenteditable="true"
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96 focus:outline-none focus:ring-2 focus:ring-primary"
+            v-html="signupReminderPreviewHtml"
+          />
+          <p v-if="selectedRows.length > 1" class="text-xs text-muted mt-1">
+            Showing preview for {{ selectedRows[0]?.first_name || selectedRows[0]?.email }}. Name is personalized per recipient.
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="subtle"
+            @click="showSignupReminderModal = false"
+          />
+          <UButton
+            :label="`Send to ${selectedRows.length} recipient${selectedRows.length > 1 ? 's' : ''}`"
+            icon="i-lucide-send"
+            color="primary"
+            :loading="sendingSignupReminders"
+            @click="confirmSendSignupReminders"
           />
         </div>
       </div>

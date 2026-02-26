@@ -23,6 +23,7 @@ interface AppSignup {
   }
   linkedin_json: any | null
   feedback_request: string | null
+  notes: string | null
 }
 
 const data = ref<AppSignup[]>([])
@@ -65,7 +66,7 @@ async function fetchAppSignups() {
   const [signupsResult, waitlistResult, testUsersResult] = await Promise.all([
     supabase
       .from('app_signups')
-      .select('id, created_at, json_payload, linkedin_json, feedback_request')
+      .select('id, created_at, json_payload, linkedin_json, feedback_request, notes')
       .order('created_at', { ascending: false }),
     supabase
       .from('signups')
@@ -268,14 +269,24 @@ const payingCount = computed(() => {
   return data.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()]).length
 })
 
+const feedbackFilter = ref('all')
+
 const filteredData = computed(() => {
+  let result = data.value
   if (viewTab.value === 'active') {
-    return data.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase()))
+    result = result.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase()))
+    if (feedbackFilter.value === 'no_feedback') {
+      result = result.filter(s => !s.feedback_request)
+    } else if (feedbackFilter.value === 'requested') {
+      result = result.filter(s => s.feedback_request && !s.notes)
+    } else if (feedbackFilter.value === 'collected') {
+      result = result.filter(s => s.notes)
+    }
   }
   if (viewTab.value === 'paying') {
-    return data.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()])
+    result = result.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()])
   }
-  return data.value
+  return result
 })
 
 async function fetchStripeSpend() {
@@ -473,6 +484,47 @@ const columns: TableColumn<AppSignup>[] = [
   }
 ]
 
+import { Marked } from 'marked'
+
+const markedInstance = new Marked({ breaks: true, async: false })
+
+const renderedNotes = computed(() => {
+  const notes = editingNoteRow.value?.notes
+  if (!notes) return ''
+  return markedInstance.parse(notes) as string
+})
+
+const showNoteModal = ref(false)
+const editingNoteRow = ref<AppSignup | null>(null)
+const editingNoteValue = ref('')
+
+function startEditNote(row: AppSignup) {
+  editingNoteRow.value = row
+  editingNoteValue.value = row.notes || ''
+  showNoteModal.value = true
+}
+
+async function saveNote() {
+  if (!editingNoteRow.value) return
+  const row = editingNoteRow.value
+  const newValue = editingNoteValue.value.trim() || null
+  if (newValue === (row.notes || null)) {
+    showNoteModal.value = false
+    return
+  }
+
+  row.notes = newValue
+  const { error } = await supabase
+    .from('app_signups')
+    .update({ notes: newValue })
+    .eq('id', row.id)
+
+  if (error) {
+    toast.add({ title: 'Error saving note', description: error.message, color: 'error' })
+  }
+  showNoteModal.value = false
+}
+
 const searchFilter = computed({
   get: (): string => {
     return (table.value?.tableApi?.getColumn('email')?.getFilterValue() as string) || ''
@@ -541,6 +593,23 @@ const searchFilter = computed({
         >
           Paying <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ payingCount }})</template>
         </button>
+        <template v-if="viewTab === 'active'">
+          <span class="text-muted/30">|</span>
+          <button
+            v-for="f in [
+              { value: 'all', label: 'All' },
+              { value: 'no_feedback', label: 'No Feedback Req' },
+              { value: 'requested', label: 'Feedback Requested' },
+              { value: 'collected', label: 'Feedback Collected' }
+            ]"
+            :key="f.value"
+            class="pb-2 text-xs font-medium border-b-2 transition-colors"
+            :class="feedbackFilter === f.value ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+            @click="feedbackFilter = f.value"
+          >
+            {{ f.label }}
+          </button>
+        </template>
         <div class="flex items-center gap-1.5 ml-auto">
           <UButton
             v-if="selectedRows.length > 0 && viewTab === 'active'"
@@ -623,7 +692,14 @@ const searchFilter = computed({
                     Active
                   </span>
                   <span
-                    v-if="row.original.feedback_request"
+                    v-if="row.original.notes"
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                  >
+                    <UIcon name="i-lucide-check-circle" class="size-3" />
+                    Feedback Collected
+                  </span>
+                  <span
+                    v-else-if="row.original.feedback_request"
                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                     :title="`Feedback requested ${formatDate(row.original.feedback_request)}`"
                   >
@@ -674,6 +750,14 @@ const searchFilter = computed({
                   )"
                 >
                   View Conversation
+                </button>
+                <button
+                  class="inline-flex items-center gap-0.5 text-xs hover:underline"
+                  :class="'text-blue-600 dark:text-blue-400'"
+                  @click.stop="startEditNote(row.original)"
+                >
+                  <UIcon :name="row.original.notes ? 'i-lucide-sticky-note' : 'i-lucide-plus'" class="size-3" />
+                  {{ row.original.notes ? 'View Notes' : 'Add Notes' }}
                 </button>
                 <span v-if="isLoadingFullstory" class="text-xs text-muted/50">
                   <UIcon name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle mr-0.5" />
@@ -1052,6 +1136,24 @@ const searchFilter = computed({
             @click="confirmSendFeedback"
           />
         </div>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Notes Modal -->
+  <UModal v-model:open="showNoteModal">
+    <template #header>
+      <h3 class="text-lg font-semibold">
+        Notes — {{ editingNoteRow?.json_payload?.email || 'Unknown' }}
+      </h3>
+    </template>
+    <template #body>
+      <div v-if="editingNoteRow?.notes" class="prose prose-sm dark:prose-invert max-w-none" v-html="renderedNotes" />
+      <p v-else class="text-sm text-muted">No notes yet.</p>
+    </template>
+    <template #footer>
+      <div class="flex justify-end">
+        <UButton color="neutral" variant="outline" label="Close" @click="showNoteModal = false" />
       </div>
     </template>
   </UModal>

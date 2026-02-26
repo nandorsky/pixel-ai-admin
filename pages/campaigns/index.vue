@@ -23,6 +23,9 @@ interface CampaignStats {
 interface CampaignWithStats extends Campaign {
   stats?: CampaignStats
   loadingStats?: boolean
+  inboxCount?: number
+  dailyVolume?: number
+  loadingVolume?: boolean
 }
 
 const toast = useToast()
@@ -59,10 +62,13 @@ async function fetchCampaigns() {
     campaigns.value = allCampaigns.map((c: Campaign) => ({
       ...c,
       stats: undefined,
-      loadingStats: true
+      loadingStats: true,
+      loadingVolume: true
     }))
-    // Fetch stats for each campaign
-    await Promise.all(campaigns.value.map(campaign => fetchCampaignStats(campaign)))
+    // Fetch stats and sender emails for each campaign
+    await Promise.all(campaigns.value.map(campaign =>
+      Promise.all([fetchCampaignStats(campaign), fetchCampaignVolume(campaign)])
+    ))
   } catch (error: any) {
     toast.add({
       title: 'Error fetching campaigns',
@@ -85,6 +91,20 @@ async function fetchCampaignStats(campaign: CampaignWithStats) {
     console.error(`Failed to fetch stats for campaign ${campaign.id}:`, error)
   }
   campaign.loadingStats = false
+}
+
+async function fetchCampaignVolume(campaign: CampaignWithStats) {
+  campaign.loadingVolume = true
+  try {
+    const response = await $fetch<any>(`/api/email-bison/campaigns/${campaign.id}/sender-emails`)
+    const senderEmails = response?.data || []
+    campaign.inboxCount = senderEmails.length
+    campaign.dailyVolume = senderEmails.reduce((sum: number, se: any) => sum + (se.daily_limit || 0), 0)
+  } catch {
+    campaign.inboxCount = undefined
+    campaign.dailyVolume = undefined
+  }
+  campaign.loadingVolume = false
 }
 
 onMounted(() => {
@@ -145,6 +165,7 @@ function getStatusColor(status: string) {
             <tr class="border-b border-default bg-elevated/50">
               <th class="text-left py-3 px-4 font-medium">Campaign</th>
               <th class="text-left py-3 px-4 font-medium">Status</th>
+              <th class="text-right py-3 px-4 font-medium">Daily Volume</th>
               <th class="text-right py-3 px-4 font-medium">Sent</th>
               <th class="text-right py-3 px-4 font-medium">Leads</th>
               <th class="text-right py-3 px-4 font-medium">Replies</th>
@@ -166,6 +187,14 @@ function getStatusColor(status: string) {
                 <UBadge :color="getStatusColor(campaign.status)" variant="subtle" size="sm">
                   {{ campaign.status }}
                 </UBadge>
+              </td>
+              <td class="text-right py-3 px-4">
+                <UIcon v-if="campaign.loadingVolume" name="i-lucide-loader-2" class="w-4 h-4 animate-spin text-muted" />
+                <template v-else-if="campaign.dailyVolume != null">
+                  <span class="font-medium">{{ campaign.dailyVolume }}</span>
+                  <span class="text-xs text-muted ml-1">({{ campaign.inboxCount }} inboxes)</span>
+                </template>
+                <span v-else class="text-muted">—</span>
               </td>
               <template v-if="campaign.loadingStats">
                 <td colspan="5" class="py-3 px-4 text-center">
