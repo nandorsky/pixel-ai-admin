@@ -23,6 +23,7 @@ interface AppSignup {
   }
   linkedin_json: any | null
   feedback_request: string | null
+  campaign_nudge_sent_at: string | null
   notes: string | null
 }
 
@@ -66,7 +67,7 @@ async function fetchAppSignups() {
   const [signupsResult, waitlistResult, testUsersResult] = await Promise.all([
     supabase
       .from('app_signups')
-      .select('id, created_at, json_payload, linkedin_json, feedback_request, notes')
+      .select('id, created_at, json_payload, linkedin_json, feedback_request, campaign_nudge_sent_at, notes')
       .order('created_at', { ascending: false }),
     supabase
       .from('signups')
@@ -286,6 +287,14 @@ const filteredData = computed(() => {
   if (viewTab.value === 'paying') {
     result = result.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()])
   }
+  if (viewTab.value === 'active_not_paying') {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000
+    result = result.filter(s => {
+      const email = s.json_payload?.email?.toLowerCase()
+      return email && activeEmails.value.has(email) && !stripeSpend.value[email]
+        && new Date(s.created_at).getTime() <= oneDayAgo
+    })
+  }
   return result
 })
 
@@ -342,6 +351,14 @@ const loadingFeedbackPreview = ref(false)
 const feedbackPreviewRef = ref<HTMLElement | null>(null)
 const feedbackPreviewFirstName = ref('')
 const sendingFeedback = ref(false)
+
+const showCampaignNudgeModal = ref(false)
+const campaignNudgeSubject = ref('')
+const campaignNudgePreviewHtml = ref('')
+const loadingCampaignNudgePreview = ref(false)
+const campaignNudgePreviewRef = ref<HTMLElement | null>(null)
+const campaignNudgePreviewFirstName = ref('')
+const sendingCampaignNudge = ref(false)
 
 async function openFeedbackModal() {
   const first = selectedRows.value[0]
@@ -430,6 +447,117 @@ async function confirmSendFeedback() {
     })
   } finally {
     sendingFeedback.value = false
+  }
+}
+
+const totalRevenue = computed(() => {
+  return Object.values(stripeSpend.value).reduce((sum, amount) => sum + amount, 0)
+})
+
+const activeNotPayingCount = computed(() => {
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000
+  return data.value.filter(s => {
+    const email = s.json_payload?.email?.toLowerCase()
+    return email && activeEmails.value.has(email) && !stripeSpend.value[email]
+      && new Date(s.created_at).getTime() <= oneDayAgo
+  }).length
+})
+
+const campaignNudgeSendAll = ref(false)
+
+const campaignNudgeRecipients = computed(() => {
+  return campaignNudgeSendAll.value ? filteredData.value : selectedRows.value
+})
+
+async function openCampaignNudgeModal(sendAll = false) {
+  campaignNudgeSendAll.value = sendAll
+  const recipients = sendAll ? filteredData.value : selectedRows.value
+  const first = recipients[0]
+  if (!first) return
+
+  showCampaignNudgeModal.value = true
+  loadingCampaignNudgePreview.value = true
+
+  try {
+    const { subject, html } = await $fetch('/api/app-signups/preview-campaign-nudge', {
+      method: 'POST',
+      body: { id: first.id }
+    }) as { subject: string; html: string }
+
+    campaignNudgeSubject.value = subject
+    campaignNudgePreviewHtml.value = html
+    campaignNudgePreviewFirstName.value = getName(first)?.split(' ')[0] || ''
+  } catch (err: any) {
+    toast.add({
+      title: 'Error loading preview',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+    showCampaignNudgeModal.value = false
+  } finally {
+    loadingCampaignNudgePreview.value = false
+  }
+}
+
+async function confirmSendCampaignNudge() {
+  const selected = campaignNudgeRecipients.value
+  if (selected.length === 0) return
+
+  sendingCampaignNudge.value = true
+  try {
+    const editedHtml = campaignNudgePreviewRef.value?.innerHTML || campaignNudgePreviewHtml.value
+    const greeting = campaignNudgePreviewFirstName.value ? `Hey ${campaignNudgePreviewFirstName.value},` : 'Hey there,'
+
+    let htmlTemplate = editedHtml
+      .replace(new RegExp(greeting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '{{greeting}}')
+
+    const { results } = await $fetch('/api/app-signups/send-campaign-nudge', {
+      method: 'POST',
+      body: {
+        ids: selected.map(s => s.id),
+        subject: campaignNudgeSubject.value,
+        htmlTemplate
+      }
+    }) as { results: { id: number; status: string; error?: string }[] }
+
+    const sentCount = results.filter(r => r.status === 'sent').length
+    const alreadySentCount = results.filter(r => r.status === 'already_sent').length
+    const errorCount = results.filter(r => r.status === 'error').length
+
+    const now = new Date().toISOString()
+    for (const result of results) {
+      if (result.status === 'sent') {
+        const signup = data.value.find(s => s.id === result.id)
+        if (signup) signup.campaign_nudge_sent_at = now
+      }
+    }
+
+    const parts: string[] = []
+    if (sentCount > 0) parts.push(`${sentCount} sent`)
+    if (alreadySentCount > 0) parts.push(`${alreadySentCount} already sent`)
+    if (errorCount > 0) parts.push(`${errorCount} failed`)
+
+    const errors = results.filter(r => r.status === 'error' && r.error).map(r => r.error)
+    const description = errors.length > 0
+      ? `${parts.join(', ')} — ${errors.join('; ')}`
+      : parts.join(', ')
+
+    toast.add({
+      title: 'Campaign nudge emails processed',
+      description,
+      color: errorCount > 0 ? 'warning' : 'success'
+    })
+
+    showCampaignNudgeModal.value = false
+    rowSelection.value = {}
+  } catch (err: any) {
+    toast.add({
+      title: 'Error sending campaign nudge emails',
+      description: err.data?.message || err.message || 'Unknown error',
+      color: 'error'
+    })
+  } finally {
+    sendingCampaignNudge.value = false
   }
 }
 
@@ -551,23 +679,26 @@ const searchFilter = computed({
           <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
           <span class="text-lg font-semibold text-highlighted ml-2">{{ data.length.toLocaleString() }}</span>
         </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">From Waitlist</span>
-          <span class="text-lg font-semibold text-highlighted ml-2">{{ waitlistCount.toLocaleString() }}</span>
-          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((waitlistCount / data.length) * 100) }}%)</span>
-        </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">Not Waitlist</span>
-          <span class="text-lg font-semibold text-highlighted ml-2">{{ nonWaitlistCount.toLocaleString() }}</span>
-          <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((nonWaitlistCount / data.length) * 100) }}%)</span>
-        </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
+<div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Active</span>
           <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
           <template v-else>
             <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
             <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / data.length) * 100) }}%)</span>
           </template>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Paying</span>
+          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <template v-else>
+            <span class="text-lg font-semibold text-highlighted ml-2">{{ payingCount.toLocaleString() }}</span>
+            <span v-if="data.length > 0" class="text-xs text-muted ml-1">({{ Math.round((payingCount / data.length) * 100) }}%)</span>
+          </template>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Revenue</span>
+          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <span v-else class="text-lg font-semibold text-emerald-600 dark:text-emerald-400 ml-2">${{ totalRevenue.toLocaleString() }}</span>
         </div>
       </div>
 
@@ -592,6 +723,13 @@ const searchFilter = computed({
           @click="viewTab = 'paying'"
         >
           Paying <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ payingCount }})</template>
+        </button>
+        <button
+          class="pb-2 text-sm font-medium border-b-2 transition-colors"
+          :class="viewTab === 'active_not_paying' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-default'"
+          @click="viewTab = 'active_not_paying'"
+        >
+          Active &amp; Not Paying <UIcon v-if="isLoadingActive || isLoadingStripe" name="i-lucide-loader-2" class="size-3 animate-spin inline-block align-middle" /><template v-else>({{ activeNotPayingCount }})</template>
         </button>
         <template v-if="viewTab === 'active'">
           <span class="text-muted/30">|</span>
@@ -618,6 +756,23 @@ const searchFilter = computed({
             color="primary"
             size="sm"
             @click="openFeedbackModal"
+          />
+          <UButton
+            v-if="selectedRows.length > 0 && viewTab === 'active_not_paying'"
+            :label="`Send Campaign Nudge (${selectedRows.length})`"
+            icon="i-lucide-mail"
+            color="primary"
+            size="sm"
+            @click="openCampaignNudgeModal(false)"
+          />
+          <UButton
+            v-if="viewTab === 'active_not_paying' && filteredData.length > 0"
+            :label="`Send Campaign Nudge to All (${filteredData.length})`"
+            icon="i-lucide-mail"
+            color="primary"
+            variant="subtle"
+            size="sm"
+            @click="openCampaignNudgeModal(true)"
           />
           <UInput
             v-model="searchFilter"
@@ -705,6 +860,14 @@ const searchFilter = computed({
                   >
                     <UIcon name="i-lucide-message-square" class="size-3" />
                     Feedback Requested
+                  </span>
+                  <span
+                    v-if="row.original.campaign_nudge_sent_at"
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                    :title="`Campaign nudge sent ${formatDate(row.original.campaign_nudge_sent_at)}`"
+                  >
+                    <UIcon name="i-lucide-mail" class="size-3" />
+                    Nudge Sent
                   </span>
                 </div>
               </div>
@@ -1134,6 +1297,71 @@ const searchFilter = computed({
             color="primary"
             :loading="sendingFeedback"
             @click="confirmSendFeedback"
+          />
+        </div>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Campaign Nudge Modal -->
+  <UModal v-model:open="showCampaignNudgeModal" title="Preview Campaign Nudge Email" :ui="{ width: 'max-w-2xl' }">
+    <template #body>
+      <div class="space-y-4">
+        <!-- Recipients -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">To ({{ campaignNudgeRecipients.length }})</label>
+          <div class="flex flex-wrap gap-1.5">
+            <span
+              v-for="s in campaignNudgeRecipients.slice(0, 10)"
+              :key="s.id"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-neutral-100 dark:bg-neutral-800 text-muted"
+            >
+              {{ getName(s) || s.json_payload?.email?.split('@')[0] || '—' }}
+            </span>
+            <span v-if="campaignNudgeRecipients.length > 10" class="text-xs text-muted self-center">
+              +{{ campaignNudgeRecipients.length - 10 }} more
+            </span>
+          </div>
+        </div>
+
+        <!-- Subject -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Subject</label>
+          <UInput v-model="campaignNudgeSubject" class="w-full" />
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="text-sm font-medium text-muted mb-1 block">Preview</label>
+          <div v-if="loadingCampaignNudgePreview" class="flex items-center justify-center py-12 rounded-lg border border-default bg-white">
+            <UIcon name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-muted" />
+          </div>
+          <div
+            v-else
+            ref="campaignNudgePreviewRef"
+            contenteditable="true"
+            class="rounded-lg border border-default bg-white p-4 overflow-auto max-h-96 focus:outline-none focus:ring-2 focus:ring-primary"
+            v-html="campaignNudgePreviewHtml"
+          />
+          <p v-if="campaignNudgeRecipients.length > 1" class="text-xs text-muted mt-1">
+            Showing preview for {{ getName(campaignNudgeRecipients[0]) || campaignNudgeRecipients[0]?.json_payload?.email }}. Name is personalized per recipient.
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="subtle"
+            @click="showCampaignNudgeModal = false"
+          />
+          <UButton
+            :label="`Send to ${campaignNudgeRecipients.length} recipient${campaignNudgeRecipients.length > 1 ? 's' : ''}`"
+            icon="i-lucide-send"
+            color="primary"
+            :loading="sendingCampaignNudge"
+            @click="confirmSendCampaignNudge"
           />
         </div>
       </div>

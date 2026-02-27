@@ -1,82 +1,166 @@
 <script setup lang="ts">
-import { sub, format, formatDistanceToNow, startOfWeek, startOfDay, eachDayOfInterval } from 'date-fns'
-import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip, VisSingleContainer, VisDonut } from '@unovis/vue'
-import { Donut } from '@unovis/ts'
+import { sub, format, formatDistanceToNow, startOfDay, eachDayOfInterval } from 'date-fns'
+import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip } from '@unovis/vue'
+
+type ChartRecord = { date: Date; count: number }
 
 const supabase = useSupabase()
 
-interface LinkedInProfilePicture {
-  url: string
-  width: number
-  height: number
-}
-
-interface LinkedInJson {
-  headline?: string
-  profilePicture?: string
-  profilePictures?: LinkedInProfilePicture[]
-}
-
-interface Signup {
+interface AppSignup {
   id: number
-  email: string
-  first_name: string | null
-  last_name: string | null
-  referral_code: string
-  referred_by: string | null
   created_at: string
-  utm_parameters: Record<string, string> | null
-  linkedin_json: LinkedInJson | null
-  product_access: boolean | null
-  invite_sent_at: string | null
+  json_payload: {
+    email: string
+    referredBy: string | null
+    waitlistId: number | null
+    earlyAccess: boolean
+    referralUrl: string | null
+    referralCode: string | null
+  }
+  linkedin_json: any | null
 }
 
-function getLinkedInPhoto(linkedin: LinkedInJson | null): string | null {
-  if (!linkedin) return null
-  if (linkedin.profilePicture) return linkedin.profilePicture
-  if (linkedin.profilePictures?.length) {
-    const preferred = linkedin.profilePictures.find(p => p.width === 100) || linkedin.profilePictures[0]
+const appSignups = ref<AppSignup[]>([])
+const loading = ref(true)
+const activeEmails = ref<Set<string>>(new Set())
+const rawTracesByEmail = ref<Record<string, any[]>>({})
+const isLoadingActive = ref(true)
+const stripeSpend = ref<Record<string, number>>({})
+const isLoadingStripe = ref(true)
+const recentTraces = ref<any[]>([])
+
+function getLinkedInPhoto(lj: any): string | null {
+  if (!lj) return null
+  if (lj.profilePicture) return lj.profilePicture
+  if (lj.profilePictures?.length) {
+    const preferred = lj.profilePictures.find((p: any) => p.width === 100) || lj.profilePictures[0]
     return preferred?.url || null
   }
   return null
 }
 
-type ChartRecord = { date: Date; count: number }
+function getLinkedInName(lj: any): string | null {
+  if (!lj) return null
+  return [lj.firstName, lj.lastName].filter(Boolean).join(' ') || null
+}
 
-const signups = ref<Signup[]>([])
-const loading = ref(true)
+function getTraceInput(trace: any): string {
+  if (!trace.input?.messages?.length) return ''
+  const human = trace.input.messages.find((m: any) => m.type === 'human')
+  return human?.content || ''
+}
 
-// Stats
-const totalSignups = computed(() => signups.value.length)
-const invitesSent = computed(() => signups.value.filter(s => s.invite_sent_at).length)
-const appSignupsRaw = ref<{ email: string; created_at: string }[]>([])
-const appSignupsTotal = computed(() => appSignupsRaw.value.length)
-const appSignupsFromWaitlist = computed(() => {
-  const waitlistEmailSet = new Set(signups.value.map(s => s.email.toLowerCase()))
-  return appSignupsRaw.value.filter(e => waitlistEmailSet.has(e.email.toLowerCase())).length
-})
-const referralsCount = computed(() => {
-  const usedCodes = new Set(signups.value.map(s => s.referred_by).filter(Boolean))
-  return signups.value.filter(s => usedCodes.has(s.referral_code)).length
-})
-const thisWeekSignups = computed(() => {
-  const weekStart = startOfWeek(new Date())
-  return signups.value.filter(s => new Date(s.created_at) >= weekStart).length
-})
-const todaySignups = computed(() => {
-  const dayStart = startOfDay(new Date())
-  return signups.value.filter(s => new Date(s.created_at) >= dayStart).length
+function timeAgo(dateString: string): string {
+  const now = new Date()
+  const then = new Date(dateString)
+  const diffMs = now.getTime() - then.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d ago`
+  return formatDistanceToNow(then, { addSuffix: true })
+}
+
+// Computed stats
+const activeCount = computed(() => {
+  return appSignups.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase())).length
 })
 
-onMounted(async () => {
-  const [signupsResult, appSignupsResult, testUsersResult] = await Promise.all([
-    supabase
-      .from('signups')
-      .select('id, email, first_name, last_name, referral_code, referred_by, created_at, utm_parameters, linkedin_json, product_access, invite_sent_at')
-      .order('created_at', { ascending: true }),
+const payingCount = computed(() => {
+  return appSignups.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()]).length
+})
+
+const totalRevenue = computed(() => {
+  return Object.values(stripeSpend.value).reduce((sum, amount) => sum + amount, 0)
+})
+
+// App signups chart data (last 30 days cumulative)
+const appSignupsChartData = computed<ChartRecord[]>(() => {
+  if (!appSignups.value.length) return []
+
+  const range = {
+    start: sub(new Date(), { days: 30 }),
+    end: new Date()
+  }
+
+  const dates = eachDayOfInterval(range)
+  const countsByDate = new Map<string, number>()
+
+  dates.forEach(date => {
+    countsByDate.set(startOfDay(date).toISOString(), 0)
+  })
+
+  appSignups.value.forEach(signup => {
+    const signupDate = startOfDay(new Date(signup.created_at)).toISOString()
+    if (countsByDate.has(signupDate)) {
+      countsByDate.set(signupDate, (countsByDate.get(signupDate) || 0) + 1)
+    }
+  })
+
+  const baseline = appSignups.value.filter(s => new Date(s.created_at) < range.start).length
+
+  let runningTotal = baseline
+  return dates.map(date => {
+    runningTotal += countsByDate.get(startOfDay(date).toISOString()) || 0
+    return { date, count: runningTotal }
+  })
+})
+
+const chartX = (_: ChartRecord, i: number) => i
+const chartY = (d: ChartRecord) => d.count
+const chartXTicks = (i: number) => {
+  if (!appSignupsChartData.value[i] || i === 0 || i === appSignupsChartData.value.length - 1) return ''
+  return format(appSignupsChartData.value[i].date, 'd MMM')
+}
+const chartTooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} total`
+
+// Recent app signups (8 most recent)
+const recentAppSignups = computed(() => {
+  return appSignups.value.slice(0, 8)
+})
+
+// Build email -> app_signup lookup for trace avatars
+const appSignupByEmail = computed(() => {
+  const map: Record<string, AppSignup> = {}
+  for (const s of appSignups.value) {
+    const email = s.json_payload?.email?.toLowerCase()
+    if (email) map[email] = s
+  }
+  return map
+})
+
+// Recent prompts from traces
+const recentPrompts = computed(() => {
+  return recentTraces.value
+    .map(trace => {
+      const email = (trace.metadata?.user_email || trace.metadata?.user_meail || '').toLowerCase()
+      const signup = appSignupByEmail.value[email]
+      const prompt = getTraceInput(trace)
+      if (!prompt) return null
+      return {
+        id: trace.id,
+        email,
+        name: signup ? getLinkedInName(signup.linkedin_json) : null,
+        photo: signup ? getLinkedInPhoto(signup.linkedin_json) : null,
+        prompt,
+        time: trace.start_time || trace.created_at
+      }
+    })
+    .filter(Boolean)
+    .slice(0, 10)
+})
+
+async function fetchAppSignups() {
+  loading.value = true
+
+  const [signupsResult, testUsersResult] = await Promise.all([
     supabase
       .from('app_signups')
-      .select('created_at, json_payload'),
+      .select('id, created_at, json_payload, linkedin_json')
+      .order('created_at', { ascending: false }),
     supabase
       .from('test_users')
       .select('email')
@@ -86,185 +170,72 @@ onMounted(async () => {
     (testUsersResult.data || []).map((r: any) => r.email?.toLowerCase()).filter(Boolean)
   )
 
-  if (!signupsResult.error && signupsResult.data) {
-    signups.value = signupsResult.data
-  }
-  appSignupsRaw.value = (appSignupsResult.data || [])
-    .filter((r: any) => r.json_payload?.email && !suppressedEmails.has(r.json_payload.email.toLowerCase()) && !r.json_payload.email.toLowerCase().endsWith('@metadata.io'))
-    .map((r: any) => ({ email: r.json_payload.email, created_at: r.created_at }))
-  loading.value = false
-})
-
-// Build chart data
-const chartData = computed<ChartRecord[]>(() => {
-  if (!signups.value.length) return []
-
-  const range = {
-    start: sub(new Date(), { days: 30 }),
-    end: new Date()
-  }
-
-  const dates = eachDayOfInterval(range)
-  const countsByDate = new Map<string, number>()
-
-  // Initialize all dates with 0
-  dates.forEach(date => {
-    countsByDate.set(startOfDay(date).toISOString(), 0)
-  })
-
-  // Count signups per day
-  signups.value.forEach(signup => {
-    const signupDate = startOfDay(new Date(signup.created_at)).toISOString()
-    if (countsByDate.has(signupDate)) {
-      countsByDate.set(signupDate, (countsByDate.get(signupDate) || 0) + 1)
-    }
-  })
-
-  // Get baseline (signups before range)
-  const baseline = signups.value.filter(s => new Date(s.created_at) < range.start).length
-
-  // Build cumulative data
-  let runningTotal = baseline
-  return dates.map(date => {
-    runningTotal += countsByDate.get(startOfDay(date).toISOString()) || 0
-    return { date, count: runningTotal }
-  })
-})
-
-// Build app signups chart data
-const appSignupsChartData = computed<ChartRecord[]>(() => {
-  if (!appSignupsRaw.value.length) return []
-
-  const range = {
-    start: sub(new Date(), { days: 30 }),
-    end: new Date()
-  }
-
-  const dates = eachDayOfInterval(range)
-  const countsByDate = new Map<string, number>()
-
-  dates.forEach(date => {
-    countsByDate.set(startOfDay(date).toISOString(), 0)
-  })
-
-  appSignupsRaw.value.forEach(signup => {
-    const signupDate = startOfDay(new Date(signup.created_at)).toISOString()
-    if (countsByDate.has(signupDate)) {
-      countsByDate.set(signupDate, (countsByDate.get(signupDate) || 0) + 1)
-    }
-  })
-
-  const baseline = appSignupsRaw.value.filter(s => new Date(s.created_at) < range.start).length
-
-  let runningTotal = baseline
-  return dates.map(date => {
-    runningTotal += countsByDate.get(startOfDay(date).toISOString()) || 0
-    return { date, count: runningTotal }
-  })
-})
-
-const appX = (_: ChartRecord, i: number) => i
-const appY = (d: ChartRecord) => d.count
-const appXTicks = (i: number) => {
-  if (!appSignupsChartData.value[i] || i === 0 || i === appSignupsChartData.value.length - 1) return ''
-  return format(appSignupsChartData.value[i].date, 'd MMM')
-}
-const appTooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} total`
-
-function formatName(firstName: string | null, lastName: string | null): string {
-  return `${firstName || ''} ${lastName || ''}`.trim()
-}
-
-// Build referral map
-const codeToUser = computed(() => {
-  const map = new Map<string, { email: string; name: string }>()
-  signups.value.forEach(s => map.set(s.referral_code, {
-    email: s.email,
-    name: formatName(s.first_name, s.last_name)
-  }))
-  return map
-})
-
-// Top referrers (excluding internal @metadata.io emails)
-const topReferrers = computed(() => {
-  const referralCounts = new Map<string, { id: number; code: string; count: number; email: string; name: string; linkedinPhoto: string | null; referredPeople: { id: number; name: string; photo: string | null }[] }>()
-
-  // Count referrals for each referral code
-  signups.value.forEach(s => {
-    if (s.referred_by) {
-      const referrer = signups.value.find(r => r.referral_code === s.referred_by)
-      if (referrer && !referrer.email.toLowerCase().endsWith('@metadata.io') && referrer.email.toLowerCase() !== 'nate@patent355.com') {
-        const referredPerson = {
-          id: s.id,
-          name: formatName(s.first_name, s.last_name),
-          photo: getLinkedInPhoto(s.linkedin_json)
-        }
-        const existing = referralCounts.get(s.referred_by)
-        if (existing) {
-          existing.count++
-          existing.referredPeople.push(referredPerson)
-        } else {
-          referralCounts.set(s.referred_by, {
-            id: referrer.id,
-            code: s.referred_by,
-            count: 1,
-            email: referrer.email,
-            name: formatName(referrer.first_name, referrer.last_name),
-            linkedinPhoto: getLinkedInPhoto(referrer.linkedin_json),
-            referredPeople: [referredPerson]
-          })
-        }
-      }
-    }
-  })
-
-  return [...referralCounts.values()]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10)
-})
-
-// Recent signups
-const recentSignups = computed(() => {
-  return [...signups.value]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 8)
-    .map(s => {
-      const source = getSignupSource(s)
-      return {
-        id: s.id,
-        email: s.email,
-        name: formatName(s.first_name, s.last_name),
-        source,
-        sourceColor: getSourceColor(source),
-        date: format(new Date(s.created_at), 'MMM d'),
-        time_ago: formatDistanceToNow(new Date(s.created_at), { addSuffix: true }),
-        linkedinPhoto: getLinkedInPhoto(s.linkedin_json),
-        linkedinHeadline: s.linkedin_json?.headline || null
-      }
+  if (signupsResult.data) {
+    appSignups.value = signupsResult.data.filter((s: any) => {
+      const email = s.json_payload?.email?.toLowerCase()
+      return !email || (!suppressedEmails.has(email) && !email.endsWith('@metadata.io'))
     })
+  }
+
+  loading.value = false
+}
+
+async function fetchActiveEmails() {
+  isLoadingActive.value = true
+  try {
+    const emails = new Set<string>()
+    const byEmail: Record<string, any[]> = {}
+    let page = 1
+    const size = 200
+    let total = 0
+
+    do {
+      const result = await $fetch<any>('/api/opik/traces', {
+        params: { page, size }
+      })
+      total = result.total || 0
+
+      // Save first page traces for recent prompts feed
+      if (page === 1) {
+        recentTraces.value = (result.content || []).slice(0, 10)
+      }
+
+      for (const trace of (result.content || [])) {
+        const email = trace.metadata?.user_email || trace.metadata?.user_meail
+        if (email) {
+          const key = email.toLowerCase()
+          emails.add(key)
+          if (!byEmail[key]) byEmail[key] = []
+          byEmail[key].push(trace)
+        }
+      }
+      page++
+    } while ((page - 1) * size < total)
+
+    activeEmails.value = emails
+    rawTracesByEmail.value = byEmail
+  } catch {
+    // Silently fail - not critical
+  }
+  isLoadingActive.value = false
+}
+
+async function fetchStripeSpend() {
+  isLoadingStripe.value = true
+  try {
+    const result = await $fetch<any>('/api/stripe/spend-by-email')
+    stripeSpend.value = result.spendByEmail || {}
+  } catch {
+    // Silently fail - not critical
+  }
+  isLoadingStripe.value = false
+}
+
+onMounted(() => {
+  fetchAppSignups()
+  fetchActiveEmails()
+  fetchStripeSpend()
 })
-
-// Source breakdown for pie chart
-import { calculateSourceBreakdown, getSignupSource, getSourceColor, type SourceBreakdown } from '~/utils/signup-source'
-
-const sourceBreakdown = computed<SourceBreakdown[]>(() => calculateSourceBreakdown(signups.value))
-
-const pieValue = (d: SourceBreakdown) => d.value
-const pieColor = (d: SourceBreakdown) => d.color
-const pieTooltip = (d: any, i: number) => {
-  const item = sourceBreakdown.value[i]
-  if (item) return `${item.value}`
-  return ''
-}
-
-// Chart helpers
-const x = (_: ChartRecord, i: number) => i
-const y = (d: ChartRecord) => d.count
-const xTicks = (i: number) => {
-  if (!chartData.value[i] || i === 0 || i === chartData.value.length - 1) return ''
-  return format(chartData.value[i].date, 'd MMM')
-}
-const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} total`
 </script>
 
 <template>
@@ -278,86 +249,38 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
     </template>
 
     <template #body>
-      <!-- Stats Row -->
-      <div class="grid grid-cols-3 lg:grid-cols-6 gap-px bg-default/50 rounded-lg mb-8">
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Waitlist</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ totalSignups.toLocaleString() }}</p>
-        </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Invites Sent</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ invitesSent.toLocaleString() }}</p>
-        </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">App Signups</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ appSignupsFromWaitlist.toLocaleString() }}<span class="text-lg text-muted font-normal"> / {{ invitesSent.toLocaleString() }}</span></p>
-          <p v-if="invitesSent > 0" class="text-xs text-muted mt-1">{{ Math.round((appSignupsFromWaitlist / invitesSent) * 100) }}% conversion</p>
-        </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Referrers</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ referralsCount.toLocaleString() }}</p>
-        </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">This Week</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ thisWeekSignups.toLocaleString() }}</p>
-        </div>
-        <div class="bg-elevated p-6">
-          <p class="text-xs text-muted uppercase tracking-wide">Today</p>
-          <p class="text-3xl font-semibold text-highlighted mt-1">{{ todaySignups.toLocaleString() }}</p>
-        </div>
+      <!-- Loading message -->
+      <div v-if="loading || isLoadingActive || isLoadingStripe" class="flex items-center gap-3 mb-6 p-4 bg-blue-100 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-800 rounded-lg">
+        <UIcon name="i-lucide-loader-2" class="size-4 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
+        <p class="text-sm text-blue-700 dark:text-blue-300">Please be patient while this data loads, it is pulling from a number of APIs. Its not stuck, just takes awhile.</p>
       </div>
 
-      <!-- Charts Row -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <!-- Growth Chart -->
-        <div class="lg:col-span-2">
-          <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Growth</h2>
-            <span class="text-xs text-muted">Last 30 days</span>
-          </div>
-          <div class="bg-elevated rounded-lg p-4 pt-8 ps-12 h-72">
-            <div v-if="loading" class="h-full flex items-center justify-center">
-              <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-            </div>
-            <VisXYContainer
-              v-else-if="chartData.length > 0"
-              :data="chartData"
-              :padding="{ top: 20 }"
-              class="h-full"
-            >
-              <VisLine :x="x" :y="y" color="var(--ui-primary)" />
-              <VisArea :x="x" :y="y" color="var(--ui-primary)" :opacity="0.1" />
-              <VisAxis type="x" :x="x" :tick-format="xTicks" />
-              <VisAxis type="y" :y="y" />
-              <VisCrosshair color="var(--ui-primary)" :template="tooltipTemplate" />
-              <VisTooltip />
-            </VisXYContainer>
-          </div>
+      <!-- Stats Row -->
+      <div class="flex items-center gap-3 mb-8">
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
+          <span class="text-lg font-semibold text-highlighted ml-2">{{ appSignups.length.toLocaleString() }}</span>
         </div>
-
-        <!-- Source Breakdown Pie Chart -->
-        <div>
-          <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Sources</h2>
-          </div>
-          <div class="bg-elevated rounded-lg p-4 h-72">
-            <div v-if="loading" class="h-full flex items-center justify-center">
-              <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-            </div>
-            <div v-else-if="sourceBreakdown.length > 0" class="h-full flex flex-col overflow-hidden">
-              <VisSingleContainer :data="sourceBreakdown" class="flex-1 max-h-44 donut-chart">
-                <VisDonut :value="pieValue" :color="pieColor" :arc-width="30" :padAngle="0.02" />
-                <VisTooltip :triggers="{ [Donut.selectors.segment]: pieTooltip }" />
-              </VisSingleContainer>
-              <div class="flex flex-wrap justify-center gap-3 mt-2">
-                <div v-for="source in sourceBreakdown" :key="source.label" class="flex items-center gap-1.5 text-xs">
-                  <span class="size-2.5 rounded-full" :style="{ backgroundColor: source.color }" />
-                  <span class="text-muted">{{ source.label }}</span>
-                  <span class="text-highlighted font-medium">{{ source.value }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Active</span>
+          <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <template v-else>
+            <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
+            <span v-if="appSignups.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / appSignups.length) * 100) }}%)</span>
+          </template>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Paying</span>
+          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <template v-else>
+            <span class="text-lg font-semibold text-highlighted ml-2">{{ payingCount.toLocaleString() }}</span>
+            <span v-if="appSignups.length > 0" class="text-xs text-muted ml-1">({{ Math.round((payingCount / appSignups.length) * 100) }}%)</span>
+          </template>
+        </div>
+        <div class="bg-elevated px-4 py-2 rounded-lg">
+          <span class="text-xs text-muted uppercase tracking-wide">Revenue</span>
+          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
+          <span v-else class="text-lg font-semibold text-emerald-600 dark:text-emerald-400 ml-2">${{ totalRevenue.toLocaleString() }}</span>
         </div>
       </div>
 
@@ -377,11 +300,11 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
             :padding="{ top: 20 }"
             class="h-full"
           >
-            <VisLine :x="appX" :y="appY" color="rgb(34, 197, 94)" />
-            <VisArea :x="appX" :y="appY" color="rgb(34, 197, 94)" :opacity="0.1" />
-            <VisAxis type="x" :x="appX" :tick-format="appXTicks" />
-            <VisAxis type="y" :y="appY" />
-            <VisCrosshair color="rgb(34, 197, 94)" :template="appTooltipTemplate" />
+            <VisLine :x="chartX" :y="chartY" color="rgb(34, 197, 94)" />
+            <VisArea :x="chartX" :y="chartY" color="rgb(34, 197, 94)" :opacity="0.1" />
+            <VisAxis type="x" :x="chartX" :tick-format="chartXTicks" />
+            <VisAxis type="y" :y="chartY" />
+            <VisCrosshair color="rgb(34, 197, 94)" :template="chartTooltipTemplate" />
             <VisTooltip />
           </VisXYContainer>
           <div v-else class="h-full flex items-center justify-center text-sm text-muted">
@@ -390,121 +313,85 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
         </div>
       </div>
 
-      <!-- Top Referrers & Recent Signups -->
+      <!-- Recent Prompts & Recent App Signups -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Top Referrers -->
+        <!-- Recent Prompts -->
         <div>
           <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Top Referrers</h2>
+            <h2 class="text-sm font-medium text-highlighted">Recent Prompts</h2>
           </div>
 
-          <div v-if="loading" class="flex items-center justify-center h-32">
+          <div v-if="isLoadingActive" class="flex items-center justify-center h-32">
             <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
           </div>
 
-          <div v-else-if="topReferrers.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
-            No referrals yet
+          <div v-else-if="recentPrompts.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
+            No prompts yet
           </div>
 
           <div v-else class="bg-elevated rounded-lg divide-y divide-default">
-            <NuxtLink
-              v-for="referrer in topReferrers"
-              :key="referrer.code"
-              :to="`/signups/${referrer.id}`"
-              class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
+            <div
+              v-for="prompt in recentPrompts"
+              :key="prompt.id"
+              class="flex items-center gap-4 p-4"
             >
               <img
-                v-if="referrer.linkedinPhoto"
-                :src="referrer.linkedinPhoto"
-                :alt="referrer.name || referrer.email"
+                v-if="prompt.photo"
+                :src="prompt.photo"
+                :alt="prompt.name || prompt.email"
                 class="size-9 rounded-full object-cover shrink-0"
               />
               <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
-                {{ referrer.name ? referrer.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : referrer.email.charAt(0).toUpperCase() }}
+                {{ prompt.name ? prompt.name.split(' ').map((n: string) => n.charAt(0)).slice(0, 2).join('').toUpperCase() : prompt.email ? prompt.email.charAt(0).toUpperCase() : '?' }}
               </div>
               <div class="flex-1 min-w-0">
-                <p class="text-sm text-highlighted truncate">{{ referrer.name || referrer.email }}</p>
-                <div class="flex items-center gap-1.5 mt-1">
-                  <UIcon name="i-lucide-arrow-right" class="size-3 text-muted shrink-0" />
-                  <div class="flex -space-x-1">
-                    <template v-for="(person, idx) in referrer.referredPeople.slice(0, 5)" :key="person.id">
-                      <img
-                        v-if="person.photo"
-                        :src="person.photo"
-                        :alt="person.name"
-                        :title="person.name"
-                        class="size-5 rounded-full object-cover"
-                        :style="{ zIndex: 5 - idx }"
-                      />
-                      <div
-                        v-else
-                        :title="person.name"
-                        class="size-5 rounded-full bg-neutral-300 dark:bg-neutral-600 flex items-center justify-center text-xs font-medium text-muted"
-                        :style="{ zIndex: 5 - idx }"
-                      >
-                        {{ person.name ? person.name.charAt(0).toUpperCase() : '?' }}
-                      </div>
-                    </template>
-                    <div
-                      v-if="referrer.referredPeople.length > 5"
-                      class="size-5 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-xs font-medium text-muted"
-                    >
-                      +{{ referrer.referredPeople.length - 5 }}
-                    </div>
-                  </div>
-                </div>
+                <p class="text-sm text-highlighted truncate">{{ prompt.name || prompt.email }}</p>
+                <p class="text-xs text-muted truncate">{{ prompt.prompt }}</p>
               </div>
-              <div class="text-right shrink-0">
-                <p class="text-lg font-semibold text-highlighted">{{ referrer.count }}</p>
-                <p class="text-xs text-muted">{{ referrer.count === 1 ? 'referral' : 'referrals' }}</p>
+              <div class="text-xs text-muted shrink-0">
+                {{ timeAgo(prompt.time) }}
               </div>
-            </NuxtLink>
+            </div>
           </div>
         </div>
 
-        <!-- Recent Signups -->
+        <!-- Recent App Signups -->
         <div>
           <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Recent Signups</h2>
-            <NuxtLink to="/signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
+            <h2 class="text-sm font-medium text-highlighted">Recent App Signups</h2>
+            <NuxtLink to="/app-signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
           </div>
 
           <div v-if="loading" class="flex items-center justify-center h-32">
             <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
           </div>
 
-          <div v-else-if="recentSignups.length === 0" class="text-center py-12 text-muted text-sm">
-            No signups yet
+          <div v-else-if="recentAppSignups.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
+            No app signups yet
           </div>
 
           <div v-else class="bg-elevated rounded-lg divide-y divide-default">
             <NuxtLink
-              v-for="signup in recentSignups"
+              v-for="signup in recentAppSignups"
               :key="signup.id"
-              :to="`/signups/${signup.id}`"
+              to="/app-signups"
               class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
             >
               <img
-                v-if="signup.linkedinPhoto"
-                :src="signup.linkedinPhoto"
-                :alt="signup.name || signup.email"
+                v-if="getLinkedInPhoto(signup.linkedin_json)"
+                :src="getLinkedInPhoto(signup.linkedin_json)!"
+                :alt="getLinkedInName(signup.linkedin_json) || signup.json_payload.email"
                 class="size-9 rounded-full object-cover shrink-0"
               />
               <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
-                {{ signup.name ? signup.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.email.charAt(0).toUpperCase() }}
+                {{ getLinkedInName(signup.linkedin_json) ? getLinkedInName(signup.linkedin_json)!.split(' ').map((n: string) => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.json_payload.email.charAt(0).toUpperCase() }}
               </div>
               <div class="flex-1 min-w-0">
-                <p class="text-sm text-highlighted truncate">{{ signup.name || signup.email }}</p>
-                <p v-if="signup.linkedinHeadline" class="text-xs text-muted truncate">{{ signup.linkedinHeadline }}</p>
-                <span
-                  class="inline-flex items-center px-1.5 py-0.5 rounded text-xs text-white mt-1"
-                  :style="{ backgroundColor: signup.sourceColor }"
-                >
-                  {{ signup.source }}
-                </span>
+                <p class="text-sm text-highlighted truncate">{{ getLinkedInName(signup.linkedin_json) || signup.json_payload.email }}</p>
+                <p v-if="signup.linkedin_json?.headline" class="text-xs text-muted truncate">{{ signup.linkedin_json.headline }}</p>
               </div>
               <div class="text-xs text-muted shrink-0">
-                {{ signup.time_ago }}
+                {{ timeAgo(signup.created_at) }}
               </div>
             </NuxtLink>
           </div>
@@ -515,9 +402,8 @@ const tooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.cou
 </template>
 
 <style scoped>
-.unovis-xy-container,
-.donut-chart {
-  --vis-crosshair-line-stroke-color: var(--ui-primary);
+.unovis-xy-container {
+  --vis-crosshair-line-stroke-color: rgb(34, 197, 94);
   --vis-crosshair-circle-stroke-color: var(--ui-bg);
   --vis-axis-grid-color: var(--ui-border);
   --vis-axis-tick-color: var(--ui-border);
