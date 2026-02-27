@@ -39,33 +39,41 @@ export default defineEventHandler(async (event) => {
         .filter((e: string) => e && !suppressedEmails.has(e) && !e.endsWith('@metadata.io'))
     )]
 
-    // Search Stripe for each email, 5 at a time with delay
+    // Search Stripe for each email, 10 at a time with retry on rate limit
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
     const customerIdToEmail: Record<string, string> = {}
 
-    for (let i = 0; i < pixelEmails.length; i += 5) {
-      const batch = pixelEmails.slice(i, i + 5)
-      const results = await Promise.all(
-        batch.map(async (email) => {
-          try {
-            const result = await $fetch<any>(
-              `${baseUrl}/customers/search?query=email:'${email}'`,
-              { headers }
-            )
-            return (result.data || []).map((c: any) => ({ id: c.id, email: email }))
-          } catch (err: any) {
-            console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
-            return []
+    async function stripeSearchWithRetry(email: string, retries = 3): Promise<{ id: string; email: string }[]> {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const result = await $fetch<any>(
+            `${baseUrl}/customers/search?query=email:'${email}'`,
+            { headers }
+          )
+          return (result.data || []).map((c: any) => ({ id: c.id, email }))
+        } catch (err: any) {
+          const status = err?.statusCode || err?.status || err?.data?.error?.status
+          if (status === 429 && attempt < retries - 1) {
+            await delay(1000 * (attempt + 1))
+            continue
           }
-        })
-      )
+          console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
+          return []
+        }
+      }
+      return []
+    }
+
+    for (let i = 0; i < pixelEmails.length; i += 10) {
+      const batch = pixelEmails.slice(i, i + 10)
+      const results = await Promise.all(batch.map(email => stripeSearchWithRetry(email)))
       for (const group of results) {
         for (const c of group) {
           customerIdToEmail[c.id] = c.email
         }
       }
-      if (i + 5 < pixelEmails.length) {
-        await delay(300)
+      if (i + 10 < pixelEmails.length) {
+        await delay(100)
       }
     }
 

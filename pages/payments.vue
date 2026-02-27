@@ -67,7 +67,7 @@ function formatDate(timestamp: number) {
         <div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Customers</span>
           <UIcon v-if="isLoading" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
-          <span v-else class="text-lg font-semibold text-highlighted ml-2">{{ total.toLocaleString() }}</span>
+          <span v-else class="text-lg font-semibold text-highlighted ml-2">{{ customers.filter(c => c.totalSpend > 0).length.toLocaleString() }}</span>
         </div>
         <div class="bg-elevated px-4 py-2 rounded-lg">
           <span class="text-xs text-muted uppercase tracking-wide">Total Revenue</span>

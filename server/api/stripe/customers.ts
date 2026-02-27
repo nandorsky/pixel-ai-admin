@@ -42,34 +42,40 @@ export default defineEventHandler(async (event) => {
 
     console.log(`=== STRIPE: Looking up ${pixelEmails.length} Pixel emails ===`)
 
-    // Step 2: Look up each email in Stripe
-    // Batch 5 at a time with delay to stay within rate limits
+    // Step 2: Look up each email in Stripe, 10 at a time with retry on rate limit
     const customers: any[] = []
     let errorCount = 0
 
-    for (let i = 0; i < pixelEmails.length; i += 5) {
-      const batch = pixelEmails.slice(i, i + 5)
-      const results = await Promise.all(
-        batch.map(async (email) => {
-          try {
-            const result = await $fetch<any>(
-              `${baseUrl}/customers/search?query=email:'${email}'`,
-              { headers }
-            )
-            return result.data || []
-          } catch (err: any) {
-            errorCount++
-            console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
-            return []
+    async function stripeSearchWithRetry(email: string, retries = 3): Promise<any[]> {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const result = await $fetch<any>(
+            `${baseUrl}/customers/search?query=email:'${email}'`,
+            { headers }
+          )
+          return result.data || []
+        } catch (err: any) {
+          const status = err?.statusCode || err?.status || err?.data?.error?.status
+          if (status === 429 && attempt < retries - 1) {
+            await delay(1000 * (attempt + 1))
+            continue
           }
-        })
-      )
+          errorCount++
+          console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
+          return []
+        }
+      }
+      return []
+    }
+
+    for (let i = 0; i < pixelEmails.length; i += 10) {
+      const batch = pixelEmails.slice(i, i + 10)
+      const results = await Promise.all(batch.map(email => stripeSearchWithRetry(email)))
       for (const group of results) {
         customers.push(...group)
       }
-      // Stripe rate limit: 20 read requests/sec for search
-      if (i + 5 < pixelEmails.length) {
-        await delay(300)
+      if (i + 10 < pixelEmails.length) {
+        await delay(100)
       }
     }
 
