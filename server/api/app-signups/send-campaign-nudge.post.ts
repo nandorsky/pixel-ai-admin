@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
     try {
       const resendResponse = await resend.emails.send({
         from: 'Pixel <notifications@notifications.getpixel.ai>',
-        replyTo: 'support@getpixel.ai',
+        replyTo: 'internal@getpixel.ai',
         to: email,
         cc: 'nate@patent355.com',
         subject,
