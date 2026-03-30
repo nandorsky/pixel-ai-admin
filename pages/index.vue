@@ -1,10 +1,6 @@
 <script setup lang="ts">
-import { sub, format, formatDistanceToNow, startOfDay, eachDayOfInterval } from 'date-fns'
+import { sub, format, formatDistanceToNow, startOfDay, eachDayOfInterval, getISOWeek, getISOWeekYear } from 'date-fns'
 import { VisXYContainer, VisLine, VisAxis, VisArea, VisCrosshair, VisTooltip } from '@unovis/vue'
-
-type ChartRecord = { date: Date; count: number }
-
-const supabase = useSupabase()
 
 interface AppSignup {
   id: number
@@ -20,15 +16,21 @@ interface AppSignup {
   linkedin_json: any | null
 }
 
-const appSignups = ref<AppSignup[]>([])
-const loading = ref(true)
-const activeEmails = ref<Set<string>>(new Set())
-const rawTracesByEmail = ref<Record<string, any[]>>({})
-const isLoadingActive = ref(true)
-const stripeSpend = ref<Record<string, number>>({})
-const isLoadingStripe = ref(true)
-const recentTraces = ref<any[]>([])
+type ChartRecord = { date: Date; count: number }
 
+// Dashboard state
+const loading = ref(true)
+const refreshing = ref(false)
+const cachedAt = ref<string | null>(null)
+
+const signups = ref<AppSignup[]>([])
+const activeEmails = ref<Set<string>>(new Set())
+const stripeSpend = ref<Record<string, number>>({})
+const recentTraces = ref<any[]>([])
+const tracesByEmail = ref<Record<string, number>>({})
+const traceDaysByEmail = ref<Record<string, string[]>>({})
+
+// Helpers
 function getLinkedInPhoto(lj: any): string | null {
   if (!lj) return null
   if (lj.profilePicture) return lj.profilePicture
@@ -64,80 +66,151 @@ function timeAgo(dateString: string): string {
   return formatDistanceToNow(then, { addSuffix: true })
 }
 
-// Computed stats
+function getInitials(name: string | null, email: string): string {
+  if (name) return name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase()
+  return email ? email.charAt(0).toUpperCase() : '?'
+}
+
+// Get today's date as YYYY-MM-DD
+const todayStr = format(new Date(), 'yyyy-MM-dd')
+const sevenDaysAgoStr = format(sub(new Date(), { days: 7 }), 'yyyy-MM-dd')
+
+// Helper: get ISO week key from a YYYY-MM-DD string
+function getWeekKey(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  return `${getISOWeekYear(d)}-W${getISOWeek(d)}`
+}
+
+// Helper: get set of signup emails
+const signupEmails = computed(() => {
+  return new Set(signups.value.map(s => s.json_payload?.email?.toLowerCase()).filter(Boolean))
+})
+
+// ── Core stats ──
+
+const signupCount = computed(() => signups.value.length)
+
+// DAU: users who ran at least 1 prompt today
+const dauCount = computed(() => {
+  let count = 0
+  for (const [email, days] of Object.entries(traceDaysByEmail.value)) {
+    if (days.includes(todayStr) && signupEmails.value.has(email)) count++
+  }
+  return count
+})
+
+// WAU: users who ran at least 1 prompt in the last 7 days
+const wauCount = computed(() => {
+  let count = 0
+  for (const [email, days] of Object.entries(traceDaysByEmail.value)) {
+    if (!signupEmails.value.has(email)) continue
+    if (days.some(d => d >= sevenDaysAgoStr)) count++
+  }
+  return count
+})
+
+// Active: users with 2+ total sessions (not one-time tire-kickers)
 const activeCount = computed(() => {
-  return appSignups.value.filter(s => activeEmails.value.has(s.json_payload?.email?.toLowerCase())).length
+  let count = 0
+  for (const [email, total] of Object.entries(tracesByEmail.value)) {
+    if (total >= 2 && signupEmails.value.has(email)) count++
+  }
+  return count
+})
+
+// Retained: users who used the product in 2+ distinct ISO weeks
+const retainedCount = computed(() => {
+  let count = 0
+  for (const [email, days] of Object.entries(traceDaysByEmail.value)) {
+    if (!signupEmails.value.has(email)) continue
+    const weeks = new Set(days.map(getWeekKey))
+    if (weeks.size >= 2) count++
+  }
+  return count
 })
 
 const payingCount = computed(() => {
-  return appSignups.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()]).length
+  return signups.value.filter(s => stripeSpend.value[s.json_payload?.email?.toLowerCase()]).length
 })
 
 const totalRevenue = computed(() => {
   return Object.values(stripeSpend.value).reduce((sum, amount) => sum + amount, 0)
 })
 
-// App signups chart data (last 30 days cumulative)
-const appSignupsChartData = computed<ChartRecord[]>(() => {
-  if (!appSignups.value.length) return []
+// 30-day change calculations
+const thirtyDaysAgo = sub(new Date(), { days: 30 })
+const sixtyDaysAgo = sub(new Date(), { days: 60 })
 
-  const range = {
-    start: sub(new Date(), { days: 30 }),
-    end: new Date()
-  }
+const signups30d = computed(() => {
+  return signups.value.filter(s => new Date(s.created_at) >= thirtyDaysAgo).length
+})
 
+const signupsPrev30d = computed(() => {
+  return signups.value.filter(s => {
+    const d = new Date(s.created_at)
+    return d >= sixtyDaysAgo && d < thirtyDaysAgo
+  }).length
+})
+
+const signupChange = computed(() => signups30d.value - signupsPrev30d.value)
+
+// Chart data: Signups (30-day cumulative)
+const signupsChartData = computed<ChartRecord[]>(() => {
+  if (!signups.value.length) return []
+  const range = { start: thirtyDaysAgo, end: new Date() }
   const dates = eachDayOfInterval(range)
   const countsByDate = new Map<string, number>()
-
-  dates.forEach(date => {
-    countsByDate.set(startOfDay(date).toISOString(), 0)
+  dates.forEach(date => countsByDate.set(startOfDay(date).toISOString(), 0))
+  signups.value.forEach(signup => {
+    const key = startOfDay(new Date(signup.created_at)).toISOString()
+    if (countsByDate.has(key)) countsByDate.set(key, (countsByDate.get(key) || 0) + 1)
   })
-
-  appSignups.value.forEach(signup => {
-    const signupDate = startOfDay(new Date(signup.created_at)).toISOString()
-    if (countsByDate.has(signupDate)) {
-      countsByDate.set(signupDate, (countsByDate.get(signupDate) || 0) + 1)
-    }
-  })
-
-  const baseline = appSignups.value.filter(s => new Date(s.created_at) < range.start).length
-
-  let runningTotal = baseline
+  const baseline = signups.value.filter(s => new Date(s.created_at) < range.start).length
+  let total = baseline
   return dates.map(date => {
-    runningTotal += countsByDate.get(startOfDay(date).toISOString()) || 0
-    return { date, count: runningTotal }
+    total += countsByDate.get(startOfDay(date).toISOString()) || 0
+    return { date, count: total }
+  })
+})
+
+// Chart data: DAU over last 30 days
+const dauChartData = computed<ChartRecord[]>(() => {
+  const range = { start: thirtyDaysAgo, end: new Date() }
+  const dates = eachDayOfInterval(range)
+  return dates.map(date => {
+    const dayStr = format(date, 'yyyy-MM-dd')
+    let count = 0
+    for (const [email, days] of Object.entries(traceDaysByEmail.value)) {
+      if (days.includes(dayStr) && signupEmails.value.has(email)) count++
+    }
+    return { date, count }
   })
 })
 
 const chartX = (_: ChartRecord, i: number) => i
 const chartY = (d: ChartRecord) => d.count
-const chartXTicks = (i: number) => {
-  if (!appSignupsChartData.value[i] || i === 0 || i === appSignupsChartData.value.length - 1) return ''
-  return format(appSignupsChartData.value[i].date, 'd MMM')
+const chartXTicks = (data: ChartRecord[]) => (i: number) => {
+  if (!data[i] || i === 0 || i === data.length - 1) return ''
+  return format(data[i].date, 'd MMM')
 }
-const chartTooltipTemplate = (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} total`
+const chartTooltip = (label: string) => (d: ChartRecord) => `${format(d.date, 'MMM d')}: ${d.count} ${label}`
 
-// Recent app signups (8 most recent)
-const recentAppSignups = computed(() => {
-  return appSignups.value.slice(0, 8)
-})
-
-// Build email -> app_signup lookup for trace avatars
-const appSignupByEmail = computed(() => {
+// Email -> signup lookup
+const signupByEmail = computed(() => {
   const map: Record<string, AppSignup> = {}
-  for (const s of appSignups.value) {
+  for (const s of signups.value) {
     const email = s.json_payload?.email?.toLowerCase()
     if (email) map[email] = s
   }
   return map
 })
 
-// Recent prompts from traces
+// Recent prompts
 const recentPrompts = computed(() => {
   return recentTraces.value
     .map(trace => {
       const email = (trace.metadata?.user_email || trace.metadata?.user_meail || '').toLowerCase()
-      const signup = appSignupByEmail.value[email]
+      const signup = signupByEmail.value[email]
       const prompt = getTraceInput(trace)
       if (!prompt) return null
       return {
@@ -153,88 +226,46 @@ const recentPrompts = computed(() => {
     .slice(0, 10)
 })
 
-async function fetchAppSignups() {
+// Recent signups
+const recentAppSignups = computed(() => signups.value.slice(0, 8))
+
+// Cache freshness
+const cacheAge = computed(() => {
+  if (!cachedAt.value) return null
+  return timeAgo(cachedAt.value)
+})
+
+// Data fetching
+async function loadDashboard() {
   loading.value = true
-
-  const [signupsResult, testUsersResult] = await Promise.all([
-    supabase
-      .from('app_signups')
-      .select('id, created_at, json_payload, linkedin_json')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('test_users')
-      .select('email')
-  ])
-
-  const suppressedEmails = new Set(
-    (testUsersResult.data || []).map((r: any) => r.email?.toLowerCase()).filter(Boolean)
-  )
-
-  if (signupsResult.data) {
-    appSignups.value = signupsResult.data.filter((s: any) => {
-      const email = s.json_payload?.email?.toLowerCase()
-      return !email || (!suppressedEmails.has(email) && !email.endsWith('@metadata.io'))
-    })
+  try {
+    const result = await $fetch<any>('/api/dashboard/stats')
+    signups.value = result.signups || []
+    activeEmails.value = new Set(result.activeEmails || [])
+    stripeSpend.value = result.stripeSpend || {}
+    recentTraces.value = result.recentTraces || []
+    tracesByEmail.value = result.tracesByEmail || {}
+    traceDaysByEmail.value = result.traceDaysByEmail || {}
+    cachedAt.value = result.cachedAt || null
+  } catch (err) {
+    console.error('Failed to load dashboard:', err)
   }
-
   loading.value = false
 }
 
-async function fetchActiveEmails() {
-  isLoadingActive.value = true
+async function refreshDashboard() {
+  refreshing.value = true
   try {
-    const emails = new Set<string>()
-    const byEmail: Record<string, any[]> = {}
-    let page = 1
-    const size = 200
-    let total = 0
-
-    do {
-      const result = await $fetch<any>('/api/opik/traces', {
-        params: { page, size }
-      })
-      total = result.total || 0
-
-      // Save first page traces for recent prompts feed
-      if (page === 1) {
-        recentTraces.value = (result.content || []).slice(0, 10)
-      }
-
-      for (const trace of (result.content || [])) {
-        const email = trace.metadata?.user_email || trace.metadata?.user_meail
-        if (email) {
-          const key = email.toLowerCase()
-          emails.add(key)
-          if (!byEmail[key]) byEmail[key] = []
-          byEmail[key].push(trace)
-        }
-      }
-      page++
-    } while ((page - 1) * size < total)
-
-    activeEmails.value = emails
-    rawTracesByEmail.value = byEmail
-  } catch {
-    // Silently fail - not critical
+    await $fetch('/api/dashboard/refresh', { method: 'POST' })
+    await loadDashboard()
+  } catch (err) {
+    console.error('Failed to refresh dashboard:', err)
   }
-  isLoadingActive.value = false
-}
-
-async function fetchStripeSpend() {
-  isLoadingStripe.value = true
-  try {
-    const result = await $fetch<any>('/api/stripe/spend-by-email')
-    stripeSpend.value = result.spendByEmail || {}
-  } catch {
-    // Silently fail - not critical
-  }
-  isLoadingStripe.value = false
+  refreshing.value = false
 }
 
 onMounted(() => {
-  fetchAppSignups()
-  fetchActiveEmails()
-  fetchStripeSpend()
+  loadDashboard()
 })
 </script>
 
@@ -245,158 +276,285 @@ onMounted(() => {
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
+        <template #right>
+          <div class="flex items-center gap-3">
+            <span v-if="cacheAge && !loading" class="text-xs text-muted">
+              Updated {{ cacheAge }}
+            </span>
+            <UButton
+              icon="i-lucide-refresh-cw"
+              size="sm"
+              variant="ghost"
+              color="neutral"
+              :loading="refreshing"
+              @click="refreshDashboard"
+            />
+          </div>
+        </template>
       </UDashboardNavbar>
     </template>
 
     <template #body>
-      <!-- Loading message -->
-      <div v-if="loading || isLoadingActive || isLoadingStripe" class="flex items-center gap-3 mb-6 p-4 bg-blue-100 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-800 rounded-lg">
-        <UIcon name="i-lucide-loader-2" class="size-4 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
-        <p class="text-sm text-blue-700 dark:text-blue-300">Please be patient while this data loads, it is pulling from a number of APIs. Its not stuck, just takes awhile.</p>
-      </div>
-
-      <!-- Stats Row -->
-      <div class="flex items-center gap-3 mb-8">
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
-          <span class="text-lg font-semibold text-highlighted ml-2">{{ appSignups.length.toLocaleString() }}</span>
-        </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">Active</span>
-          <UIcon v-if="isLoadingActive" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
-          <template v-else>
-            <span class="text-lg font-semibold text-highlighted ml-2">{{ activeCount.toLocaleString() }}</span>
-            <span v-if="appSignups.length > 0" class="text-xs text-muted ml-1">({{ Math.round((activeCount / appSignups.length) * 100) }}%)</span>
-          </template>
-        </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">Paying</span>
-          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
-          <template v-else>
-            <span class="text-lg font-semibold text-highlighted ml-2">{{ payingCount.toLocaleString() }}</span>
-            <span v-if="appSignups.length > 0" class="text-xs text-muted ml-1">({{ Math.round((payingCount / appSignups.length) * 100) }}%)</span>
-          </template>
-        </div>
-        <div class="bg-elevated px-4 py-2 rounded-lg">
-          <span class="text-xs text-muted uppercase tracking-wide">Revenue</span>
-          <UIcon v-if="isLoadingStripe" name="i-lucide-loader-2" class="size-4 animate-spin text-muted ml-2 inline-block align-middle" />
-          <span v-else class="text-lg font-semibold text-emerald-600 dark:text-emerald-400 ml-2">${{ totalRevenue.toLocaleString() }}</span>
-        </div>
-      </div>
-
-      <!-- App Signups Chart -->
-      <div class="mb-8">
-        <div class="flex items-baseline justify-between mb-4">
-          <h2 class="text-sm font-medium text-highlighted">App Signups</h2>
-          <span class="text-xs text-muted">Last 30 days</span>
-        </div>
-        <div class="bg-elevated rounded-lg p-4 pt-8 ps-12 h-72">
-          <div v-if="loading" class="h-full flex items-center justify-center">
-            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-          </div>
-          <VisXYContainer
-            v-else-if="appSignupsChartData.length > 0"
-            :data="appSignupsChartData"
-            :padding="{ top: 20 }"
-            class="h-full"
-          >
-            <VisLine :x="chartX" :y="chartY" color="rgb(34, 197, 94)" />
-            <VisArea :x="chartX" :y="chartY" color="rgb(34, 197, 94)" :opacity="0.1" />
-            <VisAxis type="x" :x="chartX" :tick-format="chartXTicks" />
-            <VisAxis type="y" :y="chartY" />
-            <VisCrosshair color="rgb(34, 197, 94)" :template="chartTooltipTemplate" />
-            <VisTooltip />
-          </VisXYContainer>
-          <div v-else class="h-full flex items-center justify-center text-sm text-muted">
-            No app signups yet
+      <!-- Skeleton loading -->
+      <template v-if="loading">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div v-for="i in 4" :key="i" class="bg-elevated rounded-lg p-5 animate-pulse">
+            <div class="h-3 w-16 bg-neutral-200 dark:bg-neutral-700 rounded mb-3" />
+            <div class="h-7 w-24 bg-neutral-200 dark:bg-neutral-700 rounded mb-2" />
+            <div class="h-3 w-20 bg-neutral-200 dark:bg-neutral-700 rounded" />
           </div>
         </div>
-      </div>
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <div v-for="i in 3" :key="i" class="bg-elevated rounded-lg p-5 animate-pulse">
+            <div class="h-3 w-16 bg-neutral-200 dark:bg-neutral-700 rounded mb-3" />
+            <div class="h-7 w-20 bg-neutral-200 dark:bg-neutral-700 rounded" />
+          </div>
+        </div>
+        <div class="bg-elevated rounded-lg p-6 mb-6 animate-pulse h-40" />
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div class="bg-elevated rounded-lg p-6 animate-pulse h-72" />
+          <div class="bg-elevated rounded-lg p-6 animate-pulse h-72" />
+        </div>
+      </template>
 
-      <!-- Recent Prompts & Recent App Signups -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Recent Prompts -->
-        <div>
-          <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Recent Prompts</h2>
+      <template v-else>
+        <!-- Row 1: Signups, Paying, Revenue + Signup change -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <!-- Signups -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-user-plus" class="size-4 text-primary" />
+              <span class="text-xs text-muted uppercase tracking-wide">Signups</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">{{ signupCount.toLocaleString() }}</p>
+            <p class="text-xs mt-1" :class="signupChange >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'">
+              {{ signupChange >= 0 ? '+' : '' }}{{ signupChange }} last 30d
+            </p>
           </div>
 
-          <div v-if="isLoadingActive" class="flex items-center justify-center h-32">
-            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+          <!-- Paying -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-credit-card" class="size-4 text-violet-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">Paying</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">
+              {{ payingCount.toLocaleString() }}
+              <span v-if="signupCount > 0" class="text-sm font-normal text-muted">({{ Math.round((payingCount / signupCount) * 100) }}%)</span>
+            </p>
+            <p class="text-xs text-muted mt-1">has a Stripe charge</p>
           </div>
 
-          <div v-else-if="recentPrompts.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
-            No prompts yet
+          <!-- Revenue -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-dollar-sign" class="size-4 text-emerald-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">Revenue</span>
+            </div>
+            <p class="text-2xl font-semibold text-emerald-600 dark:text-emerald-400">
+              ${{ totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }) }}
+            </p>
+            <p class="text-xs text-muted mt-1">all time from Stripe</p>
           </div>
 
-          <div v-else class="bg-elevated rounded-lg divide-y divide-default">
-            <div
-              v-for="prompt in recentPrompts"
-              :key="prompt.id"
-              class="flex items-center gap-4 p-4"
-            >
-              <img
-                v-if="prompt.photo"
-                :src="prompt.photo"
-                :alt="prompt.name || prompt.email"
-                class="size-9 rounded-full object-cover shrink-0"
-              />
-              <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
-                {{ prompt.name ? prompt.name.split(' ').map((n: string) => n.charAt(0)).slice(0, 2).join('').toUpperCase() : prompt.email ? prompt.email.charAt(0).toUpperCase() : '?' }}
+          <!-- DAU (highlight card) -->
+          <div class="bg-elevated rounded-lg p-5 ring-1 ring-primary/20">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-zap" class="size-4 text-amber-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">DAU</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">{{ dauCount.toLocaleString() }}</p>
+            <p class="text-xs text-muted mt-1">ran a prompt today</p>
+          </div>
+        </div>
+
+        <!-- Row 2: Usage metrics with definitions -->
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <!-- WAU -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-calendar-days" class="size-4 text-blue-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">WAU</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">{{ wauCount.toLocaleString() }}</p>
+            <p class="text-xs text-muted mt-1">ran a prompt in last 7 days</p>
+          </div>
+
+          <!-- Active (2+ sessions) -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-activity" class="size-4 text-cyan-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">Active</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">
+              {{ activeCount.toLocaleString() }}
+              <span v-if="signupCount > 0" class="text-sm font-normal text-muted">({{ Math.round((activeCount / signupCount) * 100) }}%)</span>
+            </p>
+            <p class="text-xs text-muted mt-1">2+ prompts all-time</p>
+          </div>
+
+          <!-- Retained -->
+          <div class="bg-elevated rounded-lg p-5">
+            <div class="flex items-center gap-2 mb-1">
+              <UIcon name="i-lucide-shield-check" class="size-4 text-emerald-500" />
+              <span class="text-xs text-muted uppercase tracking-wide">Retained</span>
+            </div>
+            <p class="text-2xl font-semibold text-highlighted">
+              {{ retainedCount.toLocaleString() }}
+              <span v-if="activeCount > 0" class="text-sm font-normal text-muted">({{ Math.round((retainedCount / activeCount) * 100) }}% of active)</span>
+            </p>
+            <p class="text-xs text-muted mt-1">used in 2+ separate weeks</p>
+          </div>
+        </div>
+
+        <!-- Conversion Funnel -->
+        <div class="mb-6">
+          <HomeFunnel
+            :signups="signupCount"
+            :active="activeCount"
+            :paying="payingCount"
+          />
+        </div>
+
+        <!-- Dual Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <!-- Signups Chart -->
+          <div class="bg-elevated rounded-lg p-4 pt-6 ps-10">
+            <div class="flex items-baseline justify-between mb-3 ps-2">
+              <h3 class="text-sm font-medium text-highlighted">Cumulative Signups</h3>
+              <span class="text-xs text-muted">Last 30 days</span>
+            </div>
+            <div class="h-56">
+              <VisXYContainer
+                v-if="signupsChartData.length > 0"
+                :data="signupsChartData"
+                :padding="{ top: 20 }"
+                class="h-full"
+              >
+                <VisLine :x="chartX" :y="chartY" color="rgb(34, 197, 94)" />
+                <VisArea :x="chartX" :y="chartY" color="rgb(34, 197, 94)" :opacity="0.1" />
+                <VisAxis type="x" :x="chartX" :tick-format="chartXTicks(signupsChartData)" />
+                <VisAxis type="y" :y="chartY" />
+                <VisCrosshair color="rgb(34, 197, 94)" :template="chartTooltip('total signups')" />
+                <VisTooltip />
+              </VisXYContainer>
+              <div v-else class="h-full flex items-center justify-center text-sm text-muted">
+                No signup data
               </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-highlighted truncate">{{ prompt.name || prompt.email }}</p>
-                <p class="text-xs text-muted truncate">{{ prompt.prompt }}</p>
-              </div>
-              <div class="text-xs text-muted shrink-0">
-                {{ timeAgo(prompt.time) }}
+            </div>
+          </div>
+
+          <!-- DAU Chart -->
+          <div class="bg-elevated rounded-lg p-4 pt-6 ps-10">
+            <div class="flex items-baseline justify-between mb-3 ps-2">
+              <h3 class="text-sm font-medium text-highlighted">Daily Active Users</h3>
+              <span class="text-xs text-muted">Last 30 days</span>
+            </div>
+            <div class="h-56">
+              <VisXYContainer
+                v-if="dauChartData.length > 0"
+                :data="dauChartData"
+                :padding="{ top: 20 }"
+                class="h-full"
+              >
+                <VisLine :x="chartX" :y="chartY" color="rgb(59, 130, 246)" />
+                <VisArea :x="chartX" :y="chartY" color="rgb(59, 130, 246)" :opacity="0.1" />
+                <VisAxis type="x" :x="chartX" :tick-format="chartXTicks(dauChartData)" />
+                <VisAxis type="y" :y="chartY" />
+                <VisCrosshair color="rgb(59, 130, 246)" :template="chartTooltip('active users')" />
+                <VisTooltip />
+              </VisXYContainer>
+              <div v-else class="h-full flex items-center justify-center text-sm text-muted">
+                No usage data
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Recent App Signups -->
-        <div>
-          <div class="flex items-baseline justify-between mb-4">
-            <h2 class="text-sm font-medium text-highlighted">Recent App Signups</h2>
-            <NuxtLink to="/app-signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
-          </div>
-
-          <div v-if="loading" class="flex items-center justify-center h-32">
-            <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-          </div>
-
-          <div v-else-if="recentAppSignups.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
-            No app signups yet
-          </div>
-
-          <div v-else class="bg-elevated rounded-lg divide-y divide-default">
-            <NuxtLink
-              v-for="signup in recentAppSignups"
-              :key="signup.id"
-              to="/app-signups"
-              class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
-            >
-              <img
-                v-if="getLinkedInPhoto(signup.linkedin_json)"
-                :src="getLinkedInPhoto(signup.linkedin_json)!"
-                :alt="getLinkedInName(signup.linkedin_json) || signup.json_payload.email"
-                class="size-9 rounded-full object-cover shrink-0"
-              />
-              <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
-                {{ getLinkedInName(signup.linkedin_json) ? getLinkedInName(signup.linkedin_json)!.split(' ').map((n: string) => n.charAt(0)).slice(0, 2).join('').toUpperCase() : signup.json_payload.email.charAt(0).toUpperCase() }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-highlighted truncate">{{ getLinkedInName(signup.linkedin_json) || signup.json_payload.email }}</p>
-                <p v-if="signup.linkedin_json?.headline" class="text-xs text-muted truncate">{{ signup.linkedin_json.headline }}</p>
-              </div>
-              <div class="text-xs text-muted shrink-0">
-                {{ timeAgo(signup.created_at) }}
-              </div>
-            </NuxtLink>
+        <!-- Metric Definitions -->
+        <div class="mb-6 bg-elevated rounded-lg p-5">
+          <h3 class="text-xs font-medium text-muted uppercase tracking-wide mb-3">Metric Definitions</h3>
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-2 text-xs text-muted">
+            <div><span class="font-medium text-highlighted">DAU</span> — ran at least 1 prompt today</div>
+            <div><span class="font-medium text-highlighted">WAU</span> — ran at least 1 prompt in the last 7 days</div>
+            <div><span class="font-medium text-highlighted">Active</span> — ran 2+ prompts all-time (excludes one-time users)</div>
+            <div><span class="font-medium text-highlighted">Retained</span> — used the product in 2+ separate calendar weeks</div>
           </div>
         </div>
-      </div>
+
+        <!-- Recent Prompts & Signups -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Recent Prompts -->
+          <div>
+            <div class="flex items-baseline justify-between mb-4">
+              <h3 class="text-sm font-medium text-highlighted">Recent Prompts</h3>
+            </div>
+            <div v-if="recentPrompts.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
+              No prompts yet
+            </div>
+            <div v-else class="bg-elevated rounded-lg divide-y divide-default">
+              <div
+                v-for="prompt in recentPrompts"
+                :key="prompt.id"
+                class="flex items-center gap-4 p-4"
+              >
+                <img
+                  v-if="prompt.photo"
+                  :src="prompt.photo"
+                  :alt="prompt.name || prompt.email"
+                  class="size-9 rounded-full object-cover shrink-0"
+                />
+                <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+                  {{ getInitials(prompt.name, prompt.email) }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-highlighted truncate">{{ prompt.name || prompt.email }}</p>
+                  <p class="text-xs text-muted truncate">{{ prompt.prompt }}</p>
+                </div>
+                <div class="text-xs text-muted shrink-0">
+                  {{ timeAgo(prompt.time) }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Signups -->
+          <div>
+            <div class="flex items-baseline justify-between mb-4">
+              <h3 class="text-sm font-medium text-highlighted">Recent Signups</h3>
+              <NuxtLink to="/app-signups" class="text-xs text-primary hover:underline">View all</NuxtLink>
+            </div>
+            <div v-if="recentAppSignups.length === 0" class="text-center py-12 text-muted text-sm bg-elevated rounded-lg">
+              No signups yet
+            </div>
+            <div v-else class="bg-elevated rounded-lg divide-y divide-default">
+              <NuxtLink
+                v-for="signup in recentAppSignups"
+                :key="signup.id"
+                to="/app-signups"
+                class="flex items-center gap-4 p-4 hover:bg-accented/50 transition-colors"
+              >
+                <img
+                  v-if="getLinkedInPhoto(signup.linkedin_json)"
+                  :src="getLinkedInPhoto(signup.linkedin_json)!"
+                  :alt="getLinkedInName(signup.linkedin_json) || signup.json_payload.email"
+                  class="size-9 rounded-full object-cover shrink-0"
+                />
+                <div v-else class="size-9 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-sm font-medium text-muted shrink-0">
+                  {{ getInitials(getLinkedInName(signup.linkedin_json), signup.json_payload.email) }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-highlighted truncate">{{ getLinkedInName(signup.linkedin_json) || signup.json_payload.email }}</p>
+                  <p v-if="signup.linkedin_json?.headline" class="text-xs text-muted truncate">{{ signup.linkedin_json.headline }}</p>
+                </div>
+                <div class="text-xs text-muted shrink-0">
+                  {{ timeAgo(signup.created_at) }}
+                </div>
+              </NuxtLink>
+            </div>
+          </div>
+        </div>
+      </template>
     </template>
   </UDashboardPanel>
 </template>

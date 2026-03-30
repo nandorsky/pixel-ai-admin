@@ -1,5 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 
+interface Charge {
+  id: string
+  amount: number
+  currency: string
+  status: string
+  created: number
+  description: string | null
+  invoice: string | null
+}
+
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const apiKey = config.stripeSecretKey as string
@@ -40,11 +50,8 @@ export default defineEventHandler(async (event) => {
         .filter((e: string) => e && !suppressedEmails.has(e) && !e.endsWith('@metadata.io'))
     )]
 
-    console.log(`=== STRIPE: Looking up ${pixelEmails.length} Pixel emails ===`)
-
     // Step 2: Look up each email in Stripe, 10 at a time with retry on rate limit
     const customers: any[] = []
-    let errorCount = 0
 
     async function stripeSearchWithRetry(email: string, retries = 3): Promise<any[]> {
       for (let attempt = 0; attempt < retries; attempt++) {
@@ -60,8 +67,6 @@ export default defineEventHandler(async (event) => {
             await delay(1000 * (attempt + 1))
             continue
           }
-          errorCount++
-          console.error(`Stripe search failed for ${email}:`, err?.data?.error?.message || err?.message)
           return []
         }
       }
@@ -79,11 +84,9 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    console.log(`Found ${customers.length} Stripe customers (${errorCount} lookup errors)`)
-
-    // Step 3: Get charges for matched customer IDs only
+    // Step 3: Get all charges and group by customer
     const customerIds = new Set(customers.map((c: any) => c.id))
-    const chargesByCustomer: Record<string, number> = {}
+    const chargesByCustomer: Record<string, Charge[]> = {}
 
     if (customerIds.size > 0) {
       let hasMore = true
@@ -98,7 +101,16 @@ export default defineEventHandler(async (event) => {
         pages++
         for (const charge of (chargeResult.data || [])) {
           if (charge.status === 'succeeded' && customerIds.has(charge.customer)) {
-            chargesByCustomer[charge.customer] = (chargesByCustomer[charge.customer] || 0) + (charge.amount || 0)
+            if (!chargesByCustomer[charge.customer]) chargesByCustomer[charge.customer] = []
+            chargesByCustomer[charge.customer].push({
+              id: charge.id,
+              amount: charge.amount / 100,
+              currency: charge.currency || 'usd',
+              status: charge.status,
+              created: charge.created,
+              description: charge.description || null,
+              invoice: charge.invoice || null
+            })
           }
         }
         hasMore = chargeResult.has_more
@@ -108,21 +120,29 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    // Map customers
+    // Map customers with their charges
     const mapped = customers
       .filter((c: any) => c.email)
-      .map((c: any) => ({
-        id: c.id,
-        email: c.email,
-        name: c.name || null,
-        totalSpend: (chargesByCustomer[c.id] || 0) / 100,
-        created: c.created
-      }))
-      .sort((a: any, b: any) => b.created - a.created)
+      .map((c: any) => {
+        const charges = (chargesByCustomer[c.id] || []).sort((a, b) => b.created - a.created)
+        const totalSpend = charges.reduce((sum, ch) => sum + ch.amount, 0)
+        const lastChargeAt = charges.length > 0 ? charges[0].created : null
+        const firstChargeAt = charges.length > 0 ? charges[charges.length - 1].created : null
+        return {
+          id: c.id,
+          email: c.email,
+          name: c.name || null,
+          totalSpend,
+          chargeCount: charges.length,
+          charges,
+          lastChargeAt,
+          firstChargeAt,
+          created: c.created
+        }
+      })
+      .sort((a, b) => (b.lastChargeAt || b.created) - (a.lastChargeAt || a.created))
 
-    const totalRevenue = mapped.reduce((sum: number, c: any) => sum + c.totalSpend, 0)
-
-    console.log(`=== STRIPE: Done — ${mapped.length} customers, $${totalRevenue.toFixed(2)} revenue ===`)
+    const totalRevenue = mapped.reduce((sum, c) => sum + c.totalSpend, 0)
 
     return {
       customers: mapped,
