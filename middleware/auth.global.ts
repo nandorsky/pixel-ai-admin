@@ -4,6 +4,11 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
   }
 
+  // Skip auth in local dev
+  if (import.meta.dev) {
+    return
+  }
+
   // Skip auth check for login page and public reports
   if (to.path === '/login' || to.path.startsWith('/reports/')) {
     return

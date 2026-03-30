@@ -58,3 +58,14 @@ export interface Range {
   start: Date
   end: Date
 }
+
+export interface DashboardCache {
+  signups: any[]
+  activeEmails: string[]
+  stripeSpend: Record<string, number>
+  recentTraces: any[]
+  tracesByEmail: Record<string, number>
+  computedAt: string
+  fromCache: boolean
+  cachedAt: string
+}
